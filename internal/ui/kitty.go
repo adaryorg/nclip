@@ -24,8 +24,8 @@ import (
 func detectKittySupport() bool {
 	// Check specific terminal programs that support the protocol
 	termProgram := os.Getenv("TERM_PROGRAM")
-	if termProgram == "kitty" || termProgram == "ghostty" || termProgram == "WezTerm" || 
-	   termProgram == "Konsole" || termProgram == "foot" {
+	if termProgram == "kitty" || termProgram == "ghostty" || termProgram == "WezTerm" ||
+		termProgram == "Konsole" || termProgram == "foot" {
 		return true
 	}
 
@@ -35,10 +35,10 @@ func detectKittySupport() bool {
 	}
 
 	// Check if we're in WezTerm by looking for any WezTerm environment variables
-	if os.Getenv("WEZTERM_EXECUTABLE") != "" || 
-	   os.Getenv("WEZTERM_CONFIG_FILE") != "" ||
-	   os.Getenv("WEZTERM_PANE") != "" ||
-	   os.Getenv("WEZTERM_UNIX_SOCKET") != "" {
+	if os.Getenv("WEZTERM_EXECUTABLE") != "" ||
+		os.Getenv("WEZTERM_CONFIG_FILE") != "" ||
+		os.Getenv("WEZTERM_PANE") != "" ||
+		os.Getenv("WEZTERM_UNIX_SOCKET") != "" {
 		return true
 	}
 
@@ -47,7 +47,7 @@ func detectKittySupport() bool {
 	if os.Getenv("KONSOLE_VERSION") != "" {
 		return true
 	}
-	
+
 	// foot terminal
 	if os.Getenv("FOOT_PID") != "" {
 		return true
@@ -55,8 +55,8 @@ func detectKittySupport() bool {
 
 	// Check TERM environment variable for known supporting terminals
 	term := os.Getenv("TERM")
-	if strings.Contains(term, "kitty") || strings.Contains(term, "wezterm") || 
-	   strings.Contains(term, "foot") || strings.Contains(term, "konsole") {
+	if strings.Contains(term, "kitty") || strings.Contains(term, "wezterm") ||
+		strings.Contains(term, "foot") || strings.Contains(term, "konsole") {
 		return true
 	}
 

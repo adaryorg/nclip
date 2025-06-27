@@ -17,8 +17,8 @@ func (m Model) renderImageViewNew() string {
 	}
 
 	if !detectKittySupport() {
-		// Fallback for non-Kitty terminals - show debug info
-		return m.renderImageDebugView()
+		// Fallback for non-Kitty terminals
+		return m.renderSimpleImageView()
 	}
 
 	// Get image dimensions for display info
@@ -40,17 +40,12 @@ func (m Model) renderImageViewNew() string {
 	}
 
 	// Create header text
-	viewIcon := "?"
-	if m.iconHelper.GetCapabilities().SupportsUnicode {
-		viewIcon = "🖼️"
-	}
-
 	var headerText string
 	if err == nil && format != "" {
-		headerText = fmt.Sprintf("%s Image View (%dx%d %s, %d bytes)",
-			viewIcon, imageWidth, imageHeight, strings.ToUpper(format), len(m.viewingImage.ImageData))
+		headerText = fmt.Sprintf("Image View (%dx%d %s, %d bytes)",
+			imageWidth, imageHeight, strings.ToUpper(format), len(m.viewingImage.ImageData))
 	} else {
-		headerText = fmt.Sprintf("%s Image View (%d bytes)", viewIcon, len(m.viewingImage.ImageData))
+		headerText = fmt.Sprintf("Image View (%d bytes)", len(m.viewingImage.ImageData))
 	}
 
 	// Reserve space for image
@@ -61,7 +56,13 @@ func (m Model) renderImageViewNew() string {
 	}
 
 	// Footer
-	footerText := "v/esc/q: close • enter: copy • e: edit • d: debug"
+	// Create footer text based on delete confirmation state
+	var footerText string
+	if m.imageDeletePending {
+		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+	} else {
+		footerText = "o: open • enter: copy • e: edit • d: delete • any other key: close"
+	}
 
 	// Build frame content using shared function
 	frameContent := m.buildFrameContent(headerText, imageSpaceContent.String(), footerText, contentWidth)
@@ -106,19 +107,13 @@ func (m Model) renderImageViewNew() string {
 func (m Model) drawSimpleFrame(startX, startY, width, height int, format string, imgWidth, imgHeight int) string {
 	var result strings.Builder
 
-	// Get icon
-	viewIcon := "?"
-	if m.iconHelper.GetCapabilities().SupportsUnicode {
-		viewIcon = "🖼️"
-	}
-
 	// Create title
 	var title string
 	if format != "" {
-		title = fmt.Sprintf("%s Image View (%dx%d %s, %d bytes)",
-			viewIcon, imgWidth, imgHeight, strings.ToUpper(format), len(m.viewingImage.ImageData))
+		title = fmt.Sprintf("Image View (%dx%d %s, %d bytes)",
+			imgWidth, imgHeight, strings.ToUpper(format), len(m.viewingImage.ImageData))
 	} else {
-		title = fmt.Sprintf("%s Image View (%d bytes)", viewIcon, len(m.viewingImage.ImageData))
+		title = fmt.Sprintf("Image View (%d bytes)", len(m.viewingImage.ImageData))
 	}
 
 	// Ensure title fits
@@ -144,7 +139,13 @@ func (m Model) drawSimpleFrame(startX, startY, width, height int, format string,
 
 	// Bottom area with footer
 	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+height-2, startX))
-	footerText := "v/esc/q: close • enter: copy • e: edit • d: debug"
+	// Create footer text based on delete confirmation state
+	var footerText string
+	if m.imageDeletePending {
+		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+	} else {
+		footerText = "o: open • enter: copy • e: edit • d: delete • any other key: close"
+	}
 	if len(footerText) > width-2 {
 		footerText = footerText[:width-5] + "..."
 	}

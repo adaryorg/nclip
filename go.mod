@@ -10,6 +10,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/sahilm/fuzzy v0.1.1
 	golang.design/x/clipboard v0.7.1
+	golang.org/x/image v0.28.0
 )
 
 require (
@@ -30,7 +31,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp/shiny v0.0.0-20250606033433-dcc06ee1d476 // indirect
-	golang.org/x/image v0.28.0 // indirect
 	golang.org/x/mobile v0.0.0-20250606033058-a2a15c67f36f // indirect
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect

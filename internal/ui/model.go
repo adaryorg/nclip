@@ -56,8 +56,10 @@ type Model struct {
 	helpScrollOffset int
 
 	// Text viewer state
-	viewingText      *storage.ClipboardItem
-	textScrollOffset int
+	viewingText        *storage.ClipboardItem
+	textScrollOffset   int
+	textDeletePending  bool // Track if delete confirmation is pending in text view
+	imageDeletePending bool // Track if delete confirmation is pending in image view
 }
 
 func NewModel(s *storage.Storage, cfg *config.Config) Model {
@@ -196,7 +198,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle text view editing completion - stay in text view mode
 		// The text content has already been updated in the editTextViewEntry function
 		return m, nil
-
 
 	case tea.KeyMsg:
 		if m.currentMode == modeSecurityWarning {
@@ -344,6 +345,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentMode = modeList
 				m.viewingText = nil
 				m.textScrollOffset = 0
+				m.textDeletePending = false
 				return m, nil
 			case "up", "k":
 				if m.textScrollOffset > 0 {
@@ -354,6 +356,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.textScrollOffset < maxScrollOffset {
 					m.textScrollOffset++
 				}
+			case "pgup":
+				// Page up - scroll up by content height
+				newOffset := m.textScrollOffset - contentHeight
+				if newOffset < 0 {
+					newOffset = 0
+				}
+				m.textScrollOffset = newOffset
+			case "pgdown":
+				// Page down - scroll down by content height
+				newOffset := m.textScrollOffset + contentHeight
+				if newOffset > maxScrollOffset {
+					newOffset = maxScrollOffset
+				}
+				m.textScrollOffset = newOffset
 			case "home":
 				m.textScrollOffset = 0
 			case "end":
@@ -374,11 +390,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.editTextViewEntry(*m.viewingText)
 				}
 				return m, nil
+			case "d":
+				// Delete text from database with confirmation
+				if m.viewingText != nil {
+					if m.textDeletePending {
+						// Second press - confirm deletion
+						err := m.storage.Delete(m.viewingText.ID)
+						if err == nil {
+							m.items = m.storage.GetAll()
+							m.filterItems()
+							// Adjust cursor if needed
+							if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
+								m.cursor = len(m.filteredItems) - 1
+							} else if len(m.filteredItems) == 0 {
+								m.cursor = 0
+							}
+						}
+						// Exit text view after deletion
+						m.currentMode = modeList
+						m.viewingText = nil
+						m.textScrollOffset = 0
+						m.textDeletePending = false
+						return m, nil
+					} else {
+						// First press - show confirmation
+						m.textDeletePending = true
+						return m, nil
+					}
+				}
+				return m, nil
 			default:
-				// Any other key exits text view
+				// Any other key exits text view (or cancels delete confirmation)
 				m.currentMode = modeList
 				m.viewingText = nil
 				m.textScrollOffset = 0
+				m.textDeletePending = false
 				return m, nil
 			}
 
@@ -395,10 +441,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c", "q", "esc":
 				// Exit image view mode - clear Kitty graphics only
 				// Let Bubble Tea handle terminal state management
-				fmt.Print("\x1b_Ga=d;\x1b\\")  // Delete all Kitty images
-				
+				fmt.Print("\x1b_Ga=d;\x1b\\") // Delete all Kitty images
+
 				m.currentMode = modeList
 				m.viewingImage = nil
+				m.imageDeletePending = false
 				return m, nil
 			case "enter":
 				// Copy image to clipboard
@@ -416,19 +463,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.editImage(*m.viewingImage)
 				}
 				return m, nil
-			case "d":
-				// Debug - dump image info to file
+			case "o":
+				// Open in external image viewer
 				if m.viewingImage != nil {
-					return m, m.dumpImageDebug(*m.viewingImage)
+					return m, m.openImageInViewer(*m.viewingImage)
+				}
+				return m, nil
+			case "d":
+				// Delete image from database with confirmation
+				if m.viewingImage != nil {
+					if m.imageDeletePending {
+						// Second press - confirm deletion
+						err := m.storage.Delete(m.viewingImage.ID)
+						if err == nil {
+							m.items = m.storage.GetAll()
+							m.filterItems()
+							// Adjust cursor if needed
+							if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
+								m.cursor = len(m.filteredItems) - 1
+							} else if len(m.filteredItems) == 0 {
+								m.cursor = 0
+							}
+						}
+						// Clear Kitty graphics and exit image view after deletion
+						fmt.Print("\x1b_Ga=d;\x1b\\") // Delete all Kitty images
+						m.currentMode = modeList
+						m.viewingImage = nil
+						m.imageDeletePending = false
+						return m, nil
+					} else {
+						// First press - show confirmation
+						m.imageDeletePending = true
+						return m, nil
+					}
 				}
 				return m, nil
 			default:
-				// Any other key exits image view - clear Kitty graphics only
+				// Any other key exits image view (or cancels delete confirmation)
 				// Let Bubble Tea handle terminal state management
-				fmt.Print("\x1b_Ga=d;\x1b\\")  // Delete all Kitty images
-				
+				fmt.Print("\x1b_Ga=d;\x1b\\") // Delete all Kitty images
+
 				m.currentMode = modeList
 				m.viewingImage = nil
+				m.imageDeletePending = false
 				return m, nil
 			}
 		} else if m.currentMode == modeConfirmDelete {
@@ -560,6 +637,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "down", "j":
 				if m.cursor < len(m.filteredItems)-1 {
 					m.cursor++
+				}
+
+			case "pgup":
+				// Page up - jump to item roughly one screen height up
+				if len(m.filteredItems) > 0 {
+					// Calculate content area height
+					dialogHeight := m.height - 2
+					contentHeight := dialogHeight - 4
+					if contentHeight < 5 {
+						contentHeight = 5
+					}
+
+					// Calculate how many items typically fit on screen
+					// Conservative estimate: assume each item takes 2-3 lines on average
+					itemsPerPage := contentHeight / 3
+					if itemsPerPage < 1 {
+						itemsPerPage = 1
+					}
+
+					newCursor := m.cursor - itemsPerPage
+					if newCursor < 0 {
+						newCursor = 0
+					}
+					m.cursor = newCursor
+				}
+
+			case "pgdown":
+				// Page down - jump to item roughly one screen height down
+				if len(m.filteredItems) > 0 {
+					// Calculate content area height
+					dialogHeight := m.height - 2
+					contentHeight := dialogHeight - 4
+					if contentHeight < 5 {
+						contentHeight = 5
+					}
+
+					// Calculate how many items typically fit on screen
+					// Conservative estimate: assume each item takes 2-3 lines on average
+					itemsPerPage := contentHeight / 3
+					if itemsPerPage < 1 {
+						itemsPerPage = 1
+					}
+
+					newCursor := m.cursor + itemsPerPage
+					if newCursor >= len(m.filteredItems) {
+						newCursor = len(m.filteredItems) - 1
+					}
+					m.cursor = newCursor
 				}
 
 			case "ctrl+s":
@@ -721,6 +846,49 @@ func (m *Model) editImage(item storage.ClipboardItem) tea.Cmd {
 	})
 }
 
+func (m *Model) openImageInViewer(item storage.ClipboardItem) tea.Cmd {
+	if len(item.ImageData) == 0 {
+		return tea.Cmd(func() tea.Msg { return nil })
+	}
+
+	return tea.Cmd(func() tea.Msg {
+		// Create temporary image file
+		tmpFile, err := ioutil.TempFile("", "nclip-view-*.png")
+		if err != nil {
+			return nil
+		}
+
+		// Write image data to temporary file
+		_, writeErr := tmpFile.Write(item.ImageData)
+		tmpFile.Close()
+		tmpFilePath := tmpFile.Name()
+
+		if writeErr != nil {
+			os.Remove(tmpFilePath)
+			return nil
+		}
+
+		// Get image viewer from config
+		imageViewer := m.config.Editor.ImageViewer
+
+		// Launch image viewer in background (non-blocking)
+		cmd := exec.Command(imageViewer, tmpFilePath)
+		err = cmd.Start() // Use Start() instead of Run() to not block
+		if err != nil {
+			os.Remove(tmpFilePath)
+			return nil
+		}
+
+		// Start a background goroutine to clean up the temp file after viewer exits
+		go func() {
+			cmd.Wait()             // Wait for viewer to exit
+			os.Remove(tmpFilePath) // Clean up temp file
+		}()
+
+		return nil
+	})
+}
+
 func (m *Model) dumpImageDebug(item storage.ClipboardItem) tea.Cmd {
 	return tea.Cmd(func() tea.Msg {
 		// Create debug info
@@ -798,12 +966,12 @@ func (m Model) renderMainWindow() string {
 
 	// Create header text
 	var headerText string
-	if m.searchQuery != "" {
-		if m.currentMode == modeSearch {
-			headerText = "Clipboard Manager - Filter: " + m.searchQuery + "█"
-		} else {
-			headerText = "Clipboard Manager - Filter: " + m.searchQuery + " (press 'c' to clear)"
-		}
+	if m.currentMode == modeSearch {
+		// In search mode, always show filter with cursor
+		headerText = "Clipboard Manager - Filter: " + m.searchQuery + "█"
+	} else if m.searchQuery != "" {
+		// Has active filter but not in search mode
+		headerText = "Clipboard Manager - Filter: " + m.searchQuery + " (press 'c' to clear)"
 	} else {
 		headerText = "Clipboard Manager"
 	}
@@ -886,7 +1054,6 @@ func wrapText(text string, width int, maxLines int) []string {
 	return lines
 }
 
-
 // renderImageView renders the image viewer using manual positioning
 func (m Model) renderImageView() string {
 	// Use the new implementation that properly handles Kitty graphics
@@ -920,10 +1087,10 @@ Supported terminals with Kitty graphics protocol:
 
 Image info: %s (%d bytes)
 
-Press any key to return to list`, 
+Press any key to return to list`,
 		os.Getenv("TERM_PROGRAM"),
 		os.Getenv("TERM"),
-		os.Getenv("KITTY_WINDOW_ID"), 
+		os.Getenv("KITTY_WINDOW_ID"),
 		os.Getenv("WEZTERM_EXECUTABLE"),
 		os.Getenv("WEZTERM_PANE"),
 		os.Getenv("KONSOLE_VERSION"),
@@ -932,9 +1099,9 @@ Press any key to return to list`,
 		len(m.viewingImage.ImageData))
 
 	// Calculate frame dimensions
-	dialogWidth := m.width - 2   
-	dialogHeight := m.height - 2 
-	contentWidth := dialogWidth - 4   
+	dialogWidth := m.width - 2
+	dialogHeight := m.height - 2
+	contentWidth := dialogWidth - 4
 
 	frameContent := m.buildFrameContent("Image Viewer - Debug Mode", debugContent, "v/esc/q: close", contentWidth)
 	return m.createFramedDialog(dialogWidth, dialogHeight, frameContent)
@@ -942,40 +1109,53 @@ Press any key to return to list`,
 
 // renderSimpleImageView for terminals that don't support Kitty graphics
 func (m Model) renderSimpleImageView() string {
-	// Get icon
-	viewIcon := "?"
-	if m.iconHelper.GetCapabilities().SupportsUnicode {
-		viewIcon = "🖼️"
+	headerText := "Image View - Not Supported"
+
+	// Calculate frame dimensions (same as help view)
+	dialogWidth := m.width - 2
+	dialogHeight := m.height - 2
+	contentWidth := dialogWidth - 4
+	contentHeight := dialogHeight - 4
+
+	// Build content lines
+	contentLines := []string{
+		"Your terminal does not support the Kitty graphics protocol.",
+		"Supported terminals: Kitty, Ghostty, WezTerm, Konsole, foot",
+		"",
+		"Available actions:",
+		fmt.Sprintf("'o' open image in external viewer (%s)", m.config.Editor.ImageViewer),
+		"'enter' copy image to clipboard",
+		"'e' edit in external editor",
+		"'d' delete image from database",
+		"",
+		fmt.Sprintf("Image: %d bytes", len(m.viewingImage.ImageData)),
 	}
 
-	headerText := fmt.Sprintf("%s Image View - Terminal Not Supported", viewIcon)
+	// Build content and pad to fill content area (like help view does)
+	var contentBuilder strings.Builder
+	for _, line := range contentLines {
+		contentBuilder.WriteString(line)
+		contentBuilder.WriteString("\n")
+	}
 
-	unsupportedContent := fmt.Sprintf(`%s
+	// Pad to fill content area - add one extra line to push footer to bottom
+	currentLines := len(contentLines)
+	targetLines := contentHeight // Fill completely to push footer to very bottom
+	for currentLines < targetLines {
+		contentBuilder.WriteString("\n")
+		currentLines++
+	}
 
-[Terminal does not support image display]
+	// Create footer text based on delete confirmation state
+	var footerText string
+	if m.imageDeletePending {
+		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+	} else {
+		footerText = "o: open • enter: copy • e: edit • d: delete • any other key: close"
+	}
 
-Your terminal does not support the Kitty graphics protocol.
-Supported terminals: Kitty, Ghostty, WezTerm, Konsole, foot
-
-Available actions:
-• Press 'o' to open in external viewer (%s)
-• Press Enter to copy image to clipboard  
-• Press 'e' to edit in external editor
-• Press 'd' to save debug info to file
-
-Image info: %d bytes`, 
-		m.viewingImage.Content,
-		m.config.Editor.ImageViewer,
-		len(m.viewingImage.ImageData))
-
-	footerText := "o: open • v/esc/q: close • enter: copy • e: edit • d: debug"
-
-	// Calculate frame dimensions
-	dialogWidth := m.width - 2   
-	dialogHeight := m.height - 2 
-	contentWidth := dialogWidth - 4   
-
-	frameContent := m.buildFrameContent(headerText, unsupportedContent, footerText, contentWidth)
+	// Build frame content using standard function (like help view)
+	frameContent := m.buildFrameContent(headerText, contentBuilder.String(), footerText, contentWidth)
 	return m.createFramedDialog(dialogWidth, dialogHeight, frameContent)
 }
 
@@ -992,16 +1172,11 @@ func (m Model) drawImageFrame(startX, startY, width, height int, format string, 
 
 	// Header line
 	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+1, startX))
-	viewIcon := "?"
-	if m.iconHelper.GetCapabilities().SupportsUnicode {
-		viewIcon = "🖼️"
-	}
-
 	var title string
 	if format != "" {
-		title = fmt.Sprintf(" %s Image View (%dx%d %s, %d bytes) ", viewIcon, imgWidth, imgHeight, strings.ToUpper(format), len(m.viewingImage.ImageData))
+		title = fmt.Sprintf(" Image View (%dx%d %s, %d bytes) ", imgWidth, imgHeight, strings.ToUpper(format), len(m.viewingImage.ImageData))
 	} else {
-		title = fmt.Sprintf(" %s Image View (%d bytes) ", viewIcon, len(m.viewingImage.ImageData))
+		title = fmt.Sprintf(" Image View (%d bytes) ", len(m.viewingImage.ImageData))
 	}
 
 	// Truncate title if too long
@@ -1035,7 +1210,12 @@ func (m Model) drawImageFrame(startX, startY, width, height int, format string, 
 
 	// Footer line
 	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+height-2, startX))
-	footerText := " v/esc/q: close • enter: copy • e: edit • d: debug "
+	var footerText string
+	if m.imageDeletePending {
+		footerText = " Press 'd' again to confirm deletion, any other key to cancel "
+	} else {
+		footerText = " o: open • enter: copy • e: edit • d: delete • any other key: close "
+	}
 	if len(footerText) > width-2 {
 		footerText = footerText[:width-5] + "... "
 	}
@@ -1413,11 +1593,7 @@ func (m Model) renderHelp() string {
 	}
 
 	// Create header text
-	helpIcon := "?"
-	if m.iconHelper.GetCapabilities().SupportsUnicode {
-		helpIcon = "📖"
-	}
-	headerText := helpIcon + " NClip Help"
+	headerText := "NClip Help"
 
 	// Build help content
 	var helpContent strings.Builder
@@ -1553,22 +1729,10 @@ func (m Model) renderTextView() string {
 		visibleLines = append(visibleLines, line)
 	}
 
-	// Create header with icon and item info
-	viewIcon := "?"
-	if m.iconHelper.GetCapabilities().SupportsUnicode {
-		viewIcon = "📄"
-	}
-
-	// Show security icon if present
-	securityIcon := m.getSecurityIcon(*m.viewingText)
-	if securityIcon != "" {
-		viewIcon = securityIcon + " " + viewIcon
-	}
-
 	// Create title with length info
 	lineCount := len(strings.Split(m.viewingText.Content, "\n"))
 	charCount := len(m.viewingText.Content)
-	headerText := fmt.Sprintf("%s Text View (%d lines, %d chars)", viewIcon, lineCount, charCount)
+	headerText := fmt.Sprintf("Text View (%d lines, %d chars)", lineCount, charCount)
 
 	// Build text content
 	var textContent strings.Builder
@@ -1577,9 +1741,9 @@ func (m Model) renderTextView() string {
 		textContent.WriteString("\n")
 	}
 
-	// Pad to fill content area
+	// Pad to fill content area - push footer to bottom like image view
 	currentLines := len(visibleLines)
-	for currentLines < contentHeight-3 { // -3 for header, separator, footer
+	for currentLines < contentHeight { // Fill completely to push footer to very bottom
 		textContent.WriteString("\n")
 		currentLines++
 	}
@@ -1589,7 +1753,13 @@ func (m Model) renderTextView() string {
 	if maxScrollOffset > 0 {
 		scrollInfo = fmt.Sprintf(" • %d-%d/%d", start+1, end, len(textLines))
 	}
-	footerText := "v/esc/q: close • ↑/↓: scroll • enter: copy • e: edit" + scrollInfo
+	// Create footer text based on delete confirmation state
+	var footerText string
+	if m.textDeletePending {
+		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+	} else {
+		footerText = "v/esc/q: close • ↑/↓: scroll • enter: copy • e: edit • d: delete" + scrollInfo
+	}
 
 	// Build frame content using shared function
 	frameContent := m.buildFrameContent(headerText, textContent.String(), footerText, contentWidth)
@@ -1694,11 +1864,13 @@ func (m Model) generateHelpContent() []string {
 	lines = append(lines, "    ↑/↓          Scroll through text content")
 	lines = append(lines, "    Enter        Copy text to clipboard and exit")
 	lines = append(lines, "    e            Edit text (returns to viewer after editing)")
+	lines = append(lines, "    d            Delete text from database")
 	lines = append(lines, "")
 	lines = append(lines, "  In image view mode:")
 	lines = append(lines, "    Enter        Copy image to clipboard and exit")
+	lines = append(lines, "    o            Open image in external viewer")
 	lines = append(lines, "    e            Edit image in external editor")
-	lines = append(lines, "    d            Save debug info to file")
+	lines = append(lines, "    d            Delete image from database")
 	lines = append(lines, "    v/esc/q      Exit image viewer and return to list")
 	lines = append(lines, "")
 
