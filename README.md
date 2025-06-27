@@ -61,6 +61,7 @@ nclip --help
 #### Security Hash Management
 
 The `--remove-security-information` flag clears all stored security hashes. This is useful when:
+
 - You want to start fresh with security detection
 - The security system is being too aggressive and blocking content you want to keep
 - You've accidentally blocked content and want to allow it again
@@ -70,6 +71,7 @@ The `--remove-security-information` flag clears all stored security hashes. This
 ### Keyboard Shortcuts
 
 #### List Mode
+
 - `j/k` or `↑/↓` - Navigate up/down
 - `/` - Enter search mode
 - `c` - Clear current filter
@@ -85,17 +87,19 @@ The `--remove-security-information` flag clears all stored security hashes. This
 The application automatically detects your terminal's capabilities and uses appropriate indicators:
 
 - **Modern terminals** (Kitty, Alacritty, iTerm2, GNOME Terminal): `🔒` and `⚠️` emoji icons
-- **Unicode terminals**: `⚡` (high risk) and `⚪` (medium risk) symbols  
+- **Unicode terminals**: `⚡` (high risk) and `⚪` (medium risk) symbols
 - **Color terminals**: `!` (red, high risk) and `?` (yellow, medium risk)
 - **Basic terminals**: `[H]` (high risk) and `[M]` (medium risk) text indicators
 
 #### Search Mode
+
 - Type to filter items in real-time
 - `Enter` - Apply filter and return to list mode
 - `Esc` - Cancel search and clear filter
 - `Backspace` - Delete characters from search query
 
 #### Image View Mode
+
 - `Enter` - Copy image to clipboard and exit
 - `e` - Edit image in external editor
 - `d` - Save debug info to file
@@ -110,6 +114,7 @@ NClip includes comprehensive security detection to protect against accidentally 
 The daemon automatically scans all clipboard content for:
 
 **High-Risk Content (🔒):**
+
 - JWT tokens
 - API keys (GitHub, AWS, Google, Slack, Discord, Stripe, etc.)
 - SSH private/public keys
@@ -117,6 +122,7 @@ The daemon automatically scans all clipboard content for:
 - SSL certificates and PGP keys
 
 **Medium-Risk Content (⚠️):**
+
 - Password-like patterns
 - Environment variables with sensitive names
 - Suspicious random tokens
@@ -134,14 +140,15 @@ The daemon automatically scans all clipboard content for:
 
 The security indicators automatically adapt to your terminal's capabilities:
 
-| Terminal Type | High Risk | Medium Risk | Example Terminals |
-|---------------|-----------|-------------|-------------------|
-| **Modern/Emoji** | 🔒 | ⚠️ | Kitty, Alacritty, iTerm2, GNOME Terminal |
-| **Unicode** | ⚡ | ⚪ | Most xterm-compatible terminals |
-| **Color** | <span style="color:red">!</span> | <span style="color:yellow">?</span> | Basic color terminals |
-| **Basic** | [H] | [M] | Simple/legacy terminals |
+| Terminal Type    | High Risk                        | Medium Risk                         | Example Terminals                        |
+| ---------------- | -------------------------------- | ----------------------------------- | ---------------------------------------- |
+| **Modern/Emoji** | 🔒                               | ⚠️                                  | Kitty, Alacritty, iTerm2, GNOME Terminal |
+| **Unicode**      | ⚡                               | ⚪                                  | Most xterm-compatible terminals          |
+| **Color**        | <span style="color:red">!</span> | <span style="color:yellow">?</span> | Basic color terminals                    |
+| **Basic**        | [H]                              | [M]                                 | Simple/legacy terminals                  |
 
 The application detects terminal capabilities by checking:
+
 - Environment variables (`TERM`, `TERM_PROGRAM`, `LANG`)
 - Unicode/emoji rendering support
 - ANSI color support
@@ -167,6 +174,7 @@ This clears the security hash database, allowing previously blocked content to b
 ### Configuration File Location
 
 The configuration file is automatically created at:
+
 ```
 ~/.config/nclip/config.toml
 ```
@@ -174,12 +182,14 @@ The configuration file is automatically created at:
 ### Configuration Options
 
 #### Database Settings
+
 ```toml
 [database]
 max_entries = 1000  # Maximum clipboard entries to keep
 ```
 
 #### Editor Settings
+
 ```toml
 [editor]
 text_editor = "nano"  # Text editor for clipboard text
@@ -187,6 +197,7 @@ image_editor = "gimp" # Image editor for clipboard images
 ```
 
 **Text Editor Options:**
+
 - `"nano"` - Simple terminal editor (default)
 - `"vim"` - Vim editor
 - `"code"` - Visual Studio Code
@@ -194,6 +205,7 @@ image_editor = "gimp" # Image editor for clipboard images
 - Uses `$EDITOR` environment variable if not specified
 
 **Image Editor Options:**
+
 - `"gimp"` - GNU Image Manipulation Program (default)
 - `"krita"` - Digital painting application
 - `"inkscape"` - Vector graphics editor
@@ -207,6 +219,7 @@ See [THEME.md](THEME.md) for complete theming documentation.
 ### Sample Configuration
 
 Copy the sample configuration to get started:
+
 ```bash
 cp config.toml.sample ~/.config/nclip/config.toml
 ```
@@ -216,10 +229,12 @@ Then edit `~/.config/nclip/config.toml` to customize your settings.
 ## Image Support
 
 ### Supported Formats
+
 - PNG, JPEG, GIF (built-in Go support)
 - BMP, TIFF, WebP (extended support)
 
 ### Image Features
+
 - **List view**: Images show as descriptive text with size information
 - **Full-screen view**: Press `s` to view images in terminal (Kitty protocol)
 - **External editing**: Press `e` to open images in configured image editor
@@ -228,8 +243,9 @@ Then edit `~/.config/nclip/config.toml` to customize your settings.
 ### Terminal Compatibility
 
 Image display requires a terminal that supports the Kitty graphics protocol:
+
 - **Kitty** - Full support
-- **Ghostty** - Full support  
+- **Ghostty** - Full support
 - **Other terminals** - Text-only mode (images show as descriptive text)
 
 ## Development
@@ -273,7 +289,7 @@ go mod tidy
 ## Architecture
 
 - **`cmd/main.go`** - TUI application entry point
-- **`cmd/daemon/main.go`** - Background daemon entry point  
+- **`cmd/daemon/main.go`** - Background daemon entry point
 - **`internal/config/`** - TOML configuration management
 - **`internal/storage/`** - SQLite database for clipboard history
 - **`internal/clipboard/`** - Clipboard monitoring and operations
@@ -292,11 +308,13 @@ go mod tidy
 ## Data Storage
 
 Clipboard history is stored in:
+
 ```
 ~/.config/nclip/history.db
 ```
 
 This SQLite database contains:
+
 - Text clipboard entries
 - Image data and metadata
 - Timestamps for all entries
@@ -345,21 +363,25 @@ journalctl --user -u nclip -f
 ### Common Issues
 
 **Daemon not capturing clipboard:**
+
 - Ensure `DISPLAY` environment variable is set
 - Check if systemd service is running: `systemctl --user status nclip`
 - Verify clipboard access permissions
 
 **Images not displaying:**
+
 - Check if terminal supports Kitty graphics protocol
 - Images will show as text descriptions in unsupported terminals
 - Use `s` key to attempt image display
 
 **Configuration not loading:**
+
 - Verify config file location: `~/.config/nclip/config.toml`
 - Check TOML syntax with: `toml-validator config.toml`
 - Review logs for parsing errors
 
 **Image editor not launching:**
+
 - Verify image editor is installed: `which gimp`
 - Check configuration: `image_editor = "gimp"`
 - Try alternative editors: `"krita"`, `"eog"`, `"feh"`
@@ -367,6 +389,7 @@ journalctl --user -u nclip -f
 ### Debug Information
 
 Generate debug information for images:
+
 1. Open TUI with `nclip`
 2. Navigate to an image entry
 3. Press `s` to enter image view mode
@@ -374,8 +397,8 @@ Generate debug information for images:
 
 ## License
 
-[Add your license information here]
+Nclip is released under the [MIT license](https://opensource.org/licenses/MIT).
 
 ## Contributing
 
-[Add contributing guidelines here]
+TBD
