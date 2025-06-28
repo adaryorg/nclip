@@ -49,7 +49,7 @@ func detectKittySupport() bool {
 	// Check specific terminal programs that support the protocol
 	termProgram := os.Getenv("TERM_PROGRAM")
 	if termProgram == "kitty" || termProgram == "ghostty" || termProgram == "WezTerm" ||
-		termProgram == "Konsole" || termProgram == "foot" {
+		termProgram == "Konsole" {
 		return true
 	}
 
@@ -72,15 +72,11 @@ func detectKittySupport() bool {
 		return true
 	}
 
-	// foot terminal
-	if os.Getenv("FOOT_PID") != "" {
-		return true
-	}
 
 	// Check TERM environment variable for known supporting terminals
 	term := os.Getenv("TERM")
 	if strings.Contains(term, "kitty") || strings.Contains(term, "wezterm") ||
-		strings.Contains(term, "foot") || strings.Contains(term, "konsole") {
+		strings.Contains(term, "konsole") {
 		return true
 	}
 

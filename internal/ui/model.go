@@ -832,6 +832,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.imageDeletePending = false
 				return m, nil
 			}
+		} else if m.currentMode == modeImageSecurityWarning {
+			// In image security warning mode - any key dismisses the dialog
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			default:
+				// Any key dismisses the warning and returns to list mode
+				m.currentMode = modeList
+				return m, nil
+			}
 		} else if m.currentMode == modeConfirmDelete {
 			// In delete confirmation mode
 			switch msg.String() {
@@ -1026,6 +1036,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.currentMode = modeImageSecurityWarning
 						return m, nil
 					}
+				} else {
+					// For testing - show image warning even if no items
+					m.currentMode = modeImageSecurityWarning
+					return m, nil
 				}
 
 			case "i":
@@ -1491,7 +1505,6 @@ Terminal Detection Results:
 - WEZTERM_EXECUTABLE: %q
 - WEZTERM_PANE: %q
 - KONSOLE_VERSION: %q
-- FOOT_PID: %q
 
 Detection Logic:
 ✗ Not detected as supporting Kitty graphics protocol
@@ -1501,8 +1514,7 @@ Supported terminals with Kitty graphics protocol:
 - Ghostty: TERM_PROGRAM="ghostty"  
 - WezTerm: TERM_PROGRAM="WezTerm" or WEZTERM_* vars set
 - Konsole: TERM_PROGRAM="Konsole" or KONSOLE_VERSION set
-- foot: TERM_PROGRAM="foot" or FOOT_PID set
-- Or TERM containing: kitty, wezterm, foot, konsole
+- Or TERM containing: kitty, wezterm, konsole
 
 Image info: %s (%d bytes)
 
@@ -1513,7 +1525,6 @@ Press any key to return to list`,
 		os.Getenv("WEZTERM_EXECUTABLE"),
 		os.Getenv("WEZTERM_PANE"),
 		os.Getenv("KONSOLE_VERSION"),
-		os.Getenv("FOOT_PID"),
 		m.viewingImage.Content,
 		len(m.viewingImage.ImageData))
 
@@ -1539,7 +1550,7 @@ func (m Model) renderSimpleImageView() string {
 	// Build content lines
 	contentLines := []string{
 		"Your terminal does not support the Kitty graphics protocol.",
-		"Supported terminals: Kitty, Ghostty, WezTerm, Konsole, foot",
+		"Supported terminals: Kitty, Ghostty, WezTerm, Konsole",
 		"",
 		"Available actions:",
 		fmt.Sprintf("'o' open image in external viewer (%s)", m.config.Editor.ImageViewer),
@@ -2008,78 +2019,30 @@ func (m Model) renderSecurityWarning() string {
 
 // renderImageSecurityWarning renders a small warning when trying to scan images
 func (m Model) renderImageSecurityWarning() string {
-	// Get the main window content as background
-	backgroundContent := m.renderMainWindow()
-	
-	// Create a small centered warning dialog
+	// Create warning content using the frame system
 	warningWidth := 50
 	warningHeight := 7
 	
-	// Calculate center position
-	centerX := (m.width - warningWidth) / 2
-	centerY := (m.height - warningHeight) / 2
+	// Build content for the framed dialog
+	var content strings.Builder
 	
-	if centerX < 0 { centerX = 0 }
-	if centerY < 0 { centerY = 0 }
-	
-	// Create warning content
 	warningStyle := m.createStyle(m.config.Theme.Warning)
 	statusStyle := m.createStyle(m.config.Theme.Status)
 	
-	warningContent := []string{
-		"Content Scanning Not Available",
-		"",
-		"Security scanning is only available for text",
-		"content. Images cannot be analyzed for",
-		"security threats.",
-		"",
-		"Press any key to continue",
-	}
+	// Title
+	content.WriteString(warningStyle.Render("Content Scanning Not Available"))
+	content.WriteString("\n\n")
 	
-	// Build the warning dialog
-	var result strings.Builder
-	result.WriteString(backgroundContent)
+	// Description
+	content.WriteString("Security scanning is only available for text\n")
+	content.WriteString("content. Images cannot be analyzed for\n")
+	content.WriteString("security threats.\n\n")
 	
-	// Draw the warning box
-	for y := 0; y < warningHeight; y++ {
-		// Position cursor
-		result.WriteString(fmt.Sprintf("\x1b[%d;%dH", centerY+y+1, centerX+1))
-		
-		if y == 0 {
-			// Top border
-			result.WriteString("╭" + strings.Repeat("─", warningWidth-2) + "╮")
-		} else if y == warningHeight-1 {
-			// Bottom border
-			result.WriteString("╰" + strings.Repeat("─", warningWidth-2) + "╯")
-		} else {
-			// Content lines
-			line := ""
-			if y-1 < len(warningContent) {
-				line = warningContent[y-1]
-			}
-			
-			// Apply styling to specific lines
-			if y == 1 { // Title line
-				line = warningStyle.Render(line)
-			} else if y == len(warningContent) { // "Press any key" line
-				line = statusStyle.Render(line)
-			}
-			
-			// Center the text and pad
-			padding := (warningWidth - 2 - m.calculateVisibleLength(line)) / 2
-			if padding < 0 { padding = 0 }
-			
-			contentLine := strings.Repeat(" ", padding) + line
-			// Pad to full width
-			for len(contentLine) < warningWidth-2 {
-				contentLine += " "
-			}
-			
-			result.WriteString("│" + contentLine + "│")
-		}
-	}
+	// Instructions
+	content.WriteString(statusStyle.Render("Press any key to continue"))
 	
-	return result.String()
+	// Use the existing frame dialog system
+	return m.createFramedDialog(warningWidth, warningHeight, content.String())
 }
 
 // calculateOptimalStart determines the best starting item index to keep cursor visible

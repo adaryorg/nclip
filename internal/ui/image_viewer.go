@@ -72,11 +72,12 @@ func (m Model) renderImageViewNew() string {
 		headerText = fmt.Sprintf("Image View (%d bytes)", len(m.viewingImage.ImageData))
 	}
 
-	// Reserve space for image
-	imageAreaLines := contentHeight - 3 // -3 for header, separator, footer
+	// Reserve space for image - fill content area completely to push footer to bottom (same pattern as other views)
 	var imageSpaceContent strings.Builder
-	for i := 0; i < imageAreaLines; i++ {
+	currentLines := 0
+	for currentLines < contentHeight { // Fill completely to push footer to very bottom
 		imageSpaceContent.WriteString("\n")
+		currentLines++
 	}
 
 	// Footer
@@ -110,9 +111,9 @@ func (m Model) renderImageViewNew() string {
 	// Position cursor and render image
 	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", imageY, imageX))
 
-	// Calculate available space for image scaling
+	// Calculate available space for image scaling (use contentHeight since we filled it completely)
 	availableWidth := contentWidth
-	availableHeight := imageAreaLines
+	availableHeight := contentHeight
 
 	// Render image with size constraints
 	imageData := m.viewingImage.ImageData
@@ -123,6 +124,9 @@ func (m Model) renderImageViewNew() string {
 
 	imageDisplay := renderSimpleKittyImage(imageData)
 	result.WriteString(imageDisplay)
+
+	// After rendering the image, position cursor at the bottom of the screen to avoid affecting frame layout
+	result.WriteString(fmt.Sprintf("\x1b[%d;1H", m.height))
 
 	return result.String()
 }
