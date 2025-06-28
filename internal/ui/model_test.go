@@ -1,6 +1,31 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package ui
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -53,8 +78,11 @@ func TestParseColor(t *testing.T) {
 		{"random123", "random123"},
 	}
 
+	// Create a test model with advanced colors enabled for testing
+	testModel := Model{useBasicColors: false}
+	
 	for _, test := range tests {
-		result := parseColor(test.input)
+		result := testModel.parseColor(test.input)
 		if string(result) != test.expected {
 			t.Errorf("parseColor(%q) = %q, expected %q", test.input, string(result), test.expected)
 		}
@@ -193,9 +221,12 @@ func TestCreateStyle(t *testing.T) {
 		},
 	}
 
+	// Create a test model for testing
+	testModel := Model{useBasicColors: false}
+	
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			style := createStyle(test.config)
+			style := testModel.createStyle(test.config)
 
 			// We can't easily test the exact style properties due to lipgloss internals,
 			// but we can at least verify the function doesn't panic and returns a valid style
@@ -345,27 +376,260 @@ func TestWrapTextEdgeCases(t *testing.T) {
 
 // Test color parsing edge cases
 func TestParseColorEdgeCases(t *testing.T) {
+	// Create a test model with advanced colors enabled for testing
+	testModel := Model{useBasicColors: false}
+	
 	// Empty hex
-	result := parseColor("#")
+	result := testModel.parseColor("#")
 	if string(result) != "#" {
 		t.Error("Invalid hex should pass through unchanged")
 	}
 
 	// Mixed case CSS color
-	result = parseColor("ReD")
+	result = testModel.parseColor("ReD")
 	if string(result) != "#FF0000" {
 		t.Error("Mixed case CSS color should be normalized")
 	}
 
 	// Special characters
-	result = parseColor("color-with-dashes")
+	result = testModel.parseColor("color-with-dashes")
 	if string(result) != "color-with-dashes" {
 		t.Error("Unknown color should pass through unchanged")
 	}
 
 	// Numbers
-	result = parseColor("123")
+	result = testModel.parseColor("123")
 	if string(result) != "123" {
 		t.Error("ANSI color code should pass through unchanged")
+	}
+}
+
+// Test basic color fallback functionality
+func TestBasicColorFallback(t *testing.T) {
+	// Create a test model with basic colors enabled
+	testModel := Model{useBasicColors: true}
+	
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		// Complex colors should map to basic ANSI
+		{"13", "5"},   // header color -> magenta
+		{"141", "5"},  // search color -> magenta
+		{"55", "4"},   // selected background -> blue
+		{"39", "6"},   // frame border -> cyan
+		{"234", "0"},  // dark gray -> black
+		
+		// CSS colors should map to basic
+		{"red", "1"},
+		{"green", "2"},
+		{"blue", "4"},
+		{"yellow", "3"},
+		{"magenta", "5"},
+		{"cyan", "6"},
+		{"white", "7"},
+		{"gray", "8"},
+		
+		// Hex colors should map to basic
+		{"#FF0000", "1"}, // red
+		{"#00FF00", "2"}, // green
+		{"#0000FF", "4"}, // blue
+		
+		// Unknown colors should return empty
+		{"999", ""},
+		{"unknown", ""},
+	}
+
+	for _, test := range tests {
+		result := testModel.parseColor(test.input)
+		if string(result) != test.expected {
+			t.Errorf("parseColor(%q) in basic mode = %q, expected %q", test.input, string(result), test.expected)
+		}
+	}
+}
+
+// Test ANSI handling functions
+func TestPadLineToWidth(t *testing.T) {
+	// Create a test model
+	testModel := Model{useBasicColors: false}
+	
+	tests := []struct {
+		input       string
+		targetWidth int
+		expected    int // expected visible length
+	}{
+		{"hello", 10, 10},
+		{"", 5, 5},
+		{"exact", 5, 5},
+		{"toolong", 3, 3}, // Should not pad if already too long
+		{"\x1b[31mred\x1b[0m", 10, 10}, // ANSI colored text
+	}
+	
+	for _, test := range tests {
+		result := testModel.padLineToWidth(test.input, test.targetWidth)
+		visibleLen := testModel.calculateVisibleLength(result)
+		
+		// For lines that are already too long, we don't pad
+		expectedLen := test.expected
+		if testModel.calculateVisibleLength(test.input) > test.targetWidth {
+			expectedLen = testModel.calculateVisibleLength(test.input)
+		}
+		
+		if visibleLen != expectedLen {
+			t.Errorf("padLineToWidth(%q, %d) visible length = %d, expected %d", 
+				test.input, test.targetWidth, visibleLen, expectedLen)
+		}
+	}
+}
+
+func TestTruncateWithANSI(t *testing.T) {
+	// Create a test model
+	testModel := Model{useBasicColors: false}
+	
+	tests := []struct {
+		input    string
+		maxLen   int
+		expected int // expected visible length
+	}{
+		{"hello", 10, 5},
+		{"hello", 3, 3},
+		{"hello", 0, 0},
+		{"\x1b[31mhello\x1b[0m", 3, 3}, // Should preserve ANSI codes
+		{"\x1b[31mhello\x1b[0mworld", 7, 7},
+	}
+	
+	for _, test := range tests {
+		result := testModel.truncateWithANSI(test.input, test.maxLen)
+		visibleLen := testModel.calculateVisibleLength(result)
+		
+		if visibleLen != test.expected {
+			t.Errorf("truncateWithANSI(%q, %d) visible length = %d, expected %d", 
+				test.input, test.maxLen, visibleLen, test.expected)
+		}
+		
+		// Verify ANSI codes are preserved (result should contain escape sequences if input did)
+		inputHasANSI := strings.Contains(test.input, "\x1b")
+		resultHasANSI := strings.Contains(result, "\x1b")
+		if inputHasANSI && !resultHasANSI && test.maxLen > 0 {
+			t.Errorf("truncateWithANSI(%q, %d) lost ANSI codes", test.input, test.maxLen)
+		}
+	}
+}
+
+// Test content filtering
+func TestApplyContentFilter(t *testing.T) {
+	// Create a test model
+	testModel := Model{useBasicColors: false}
+	
+	// Create test items
+	testItems := []storage.ClipboardItem{
+		{ID: "1", Content: "Normal text", ContentType: "text", ThreatLevel: ""},
+		{ID: "2", Content: "Image data", ContentType: "image", ThreatLevel: ""},
+		{ID: "3", Content: "Suspicious content", ContentType: "text", ThreatLevel: "high"},
+		{ID: "4", Content: "Questionable content", ContentType: "text", ThreatLevel: "medium"},
+		{ID: "5", Content: "Another image", ContentType: "image", ThreatLevel: ""},
+	}
+	
+	tests := []struct {
+		filterMode   string
+		expectedCount int
+		description  string
+	}{
+		{"", 5, "no filter should return all items"},
+		{"images", 2, "image filter should return only images"},
+		{"security-high", 1, "high-risk filter should return only high-risk items"},
+		{"security-medium", 1, "medium-risk filter should return only medium-risk items"},
+		{"invalid", 5, "invalid filter should return all items"},
+	}
+	
+	for _, test := range tests {
+		testModel.filterMode = test.filterMode
+		result := testModel.applyContentFilter(testItems)
+		
+		if len(result) != test.expectedCount {
+			t.Errorf("Filter mode '%s': expected %d items, got %d (%s)", 
+				test.filterMode, test.expectedCount, len(result), test.description)
+		}
+		
+		// Verify content of filtered results
+		switch test.filterMode {
+		case "images":
+			for _, item := range result {
+				if item.ContentType != "image" {
+					t.Errorf("Image filter returned non-image item: %s", item.Content)
+				}
+			}
+		case "security-high":
+			for _, item := range result {
+				if item.ThreatLevel != "high" {
+					t.Errorf("High-risk filter returned non-high-risk item: %s", item.Content)
+				}
+			}
+		case "security-medium":
+			for _, item := range result {
+				if item.ThreatLevel != "medium" {
+					t.Errorf("Medium-risk filter returned non-medium-risk item: %s", item.Content)
+				}
+			}
+		}
+	}
+}
+
+// Test terminal capability detection
+func TestDetectTerminalCapabilities(t *testing.T) {
+	// Save original environment
+	originalTerm := os.Getenv("TERM")
+	originalColorTerm := os.Getenv("COLORTERM")
+	defer func() {
+		os.Setenv("TERM", originalTerm)
+		os.Setenv("COLORTERM", originalColorTerm)
+	}()
+
+	tests := []struct {
+		term      string
+		colorTerm string
+		expected  bool
+	}{
+		// Basic terminals should return false
+		{"xterm", "", false},
+		{"screen", "", false},
+		{"linux", "", false},
+		{"vt100", "", false},
+		
+		// Advanced terminals should return true
+		{"xterm-256color", "", true},
+		{"screen-256color", "", true},
+		{"alacritty", "", true},
+		{"kitty", "", true},
+		
+		// COLORTERM override should work
+		{"xterm", "truecolor", true},
+		{"linux", "24bit", true},
+		
+		// Unknown terminals default to advanced
+		{"some-unknown-term", "", true},
+	}
+
+	for _, test := range tests {
+		os.Setenv("TERM", test.term)
+		if test.colorTerm == "" {
+			os.Unsetenv("COLORTERM")
+		} else {
+			os.Setenv("COLORTERM", test.colorTerm)
+		}
+		
+		// Also unset modern terminal indicators to ensure clean test
+		os.Unsetenv("ITERM_SESSION_ID")
+		os.Unsetenv("KITTY_WINDOW_ID")
+		os.Unsetenv("ALACRITTY_SOCKET")
+		os.Unsetenv("WEZTERM_PANE")
+		os.Unsetenv("GHOSTTY_RESOURCES_DIR")
+		os.Unsetenv("COLORS")
+		
+		result := detectTerminalCapabilities()
+		if result != test.expected {
+			t.Errorf("detectTerminalCapabilities() with TERM=%s COLORTERM=%s = %v, expected %v", 
+				test.term, test.colorTerm, result, test.expected)
+		}
 	}
 }

@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package config
 
 import (
@@ -32,8 +56,8 @@ func TestConfig_DefaultValues(t *testing.T) {
 	}
 
 	// Test default theme values
-	if config.Theme.Header.Foreground != "13" {
-		t.Errorf("Expected Header.Foreground to be '13', got '%s'", config.Theme.Header.Foreground)
+	if config.Theme.Header.Foreground != "8" {
+		t.Errorf("Expected Header.Foreground to be '8', got '%s'", config.Theme.Header.Foreground)
 	}
 	if !config.Theme.Header.Bold {
 		t.Error("Expected Header.Bold to be true")
@@ -61,19 +85,19 @@ func TestConfig_DefaultValues(t *testing.T) {
 		t.Errorf("Expected Selected.Foreground to be '15', got '%s'", config.Theme.Selected.Foreground)
 	}
 	if config.Theme.Selected.Background != "55" {
-		t.Errorf("Expected Selected.Background to be '55', got '%s'", config.Theme.Selected.Background)
+		t.Errorf("Expected Selected.Background to be '55' for visibility, got '%s'", config.Theme.Selected.Background)
 	}
 
-	if config.Theme.AlternateBackground.Background != "234" {
-		t.Errorf("Expected AlternateBackground.Background to be '234', got '%s'", config.Theme.AlternateBackground.Background)
+	if config.Theme.AlternateBackground.Background != "" {
+		t.Errorf("Expected AlternateBackground.Background to be empty for syntax highlighting compatibility, got '%s'", config.Theme.AlternateBackground.Background)
 	}
 
 	// Test default frame values
-	if config.Theme.Frame.Border.Foreground != "39" {
-		t.Errorf("Expected Frame.Border.Foreground to be '39', got '%s'", config.Theme.Frame.Border.Foreground)
+	if config.Theme.Frame.Border.Foreground != "8" {
+		t.Errorf("Expected Frame.Border.Foreground to be '8', got '%s'", config.Theme.Frame.Border.Foreground)
 	}
-	if config.Theme.Frame.Background.Background != "235" {
-		t.Errorf("Expected Frame.Background.Background to be '235', got '%s'", config.Theme.Frame.Background.Background)
+	if config.Theme.Frame.Background.Background != "" {
+		t.Errorf("Expected Frame.Background.Background to be empty for syntax highlighting compatibility, got '%s'", config.Theme.Frame.Background.Background)
 	}
 
 	// Test default editor values
@@ -280,7 +304,7 @@ func TestCreateDefaultConfig(t *testing.T) {
 		"[database]",
 		"max_entries = 1000",
 		"[theme.header]",
-		"foreground = \"13\"",
+		"foreground = \"8\"",
 		"[editor]",
 		"text_editor = \"nano\"",
 		"image_editor = \"gimp\"",

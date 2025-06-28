@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package config
 
 import (
@@ -74,7 +98,7 @@ func Load() (*Config, error) {
 
 	// Set default theme values if not specified
 	if config.Theme.Header.Foreground == "" {
-		config.Theme.Header.Foreground = "13" // bright magenta/purple
+		config.Theme.Header.Foreground = "8" // grey (same as footer)
 		config.Theme.Header.Bold = true
 	}
 	if config.Theme.Status.Foreground == "" {
@@ -90,19 +114,21 @@ func Load() (*Config, error) {
 	}
 	if config.Theme.Selected.Foreground == "" {
 		config.Theme.Selected.Foreground = "15" // bright white
-		config.Theme.Selected.Background = "55" // darker purple
 	}
-	if config.Theme.AlternateBackground.Background == "" {
-		config.Theme.AlternateBackground.Background = "234" // very dark purple/gray
+	// Set selected item background for visibility (only background we keep)
+	if config.Theme.Selected.Background == "" {
+		config.Theme.Selected.Background = "55" // dark purple for selected items
 	}
+	// Force clear other background colors for better syntax highlighting compatibility
+	config.Theme.AlternateBackground.Background = ""
+	config.Theme.NormalBackground.Background = ""
+	config.Theme.Frame.Background.Background = ""
 
 	// Set default frame values if not specified
 	if config.Theme.Frame.Border.Foreground == "" {
-		config.Theme.Frame.Border.Foreground = "39" // blue color (same as help window)
+		config.Theme.Frame.Border.Foreground = "8" // grey (same as footer)
 	}
-	if config.Theme.Frame.Background.Background == "" {
-		config.Theme.Frame.Background.Background = "235" // dark gray background
-	}
+	// Frame background removed for better syntax highlighting compatibility
 
 	// Set default editor values if not specified
 	if config.Editor.TextEditor == "" {
@@ -135,7 +161,7 @@ func createDefaultConfig(configPath string) error {
 max_entries = 1000
 
 [theme.header]
-foreground = "13"
+foreground = "8"
 background = ""
 bold = true
 
@@ -156,12 +182,12 @@ bold = true
 
 [theme.selected]
 foreground = "15"
-background = "55"
+background = "55"  # Only background kept for selected item visibility
 bold = false
 
 [theme.alternate_background]
 foreground = ""
-background = "234"
+background = ""  # Background removed for better syntax highlighting
 bold = false
 
 [theme.normal_background]
@@ -170,13 +196,13 @@ background = ""
 bold = false
 
 [theme.frame.border]
-foreground = "39"
+foreground = "8"
 background = ""
 bold = false
 
 [theme.frame.background]
 foreground = ""
-background = "235"
+background = ""  # Background removed for better syntax highlighting
 bold = false
 
 [editor]

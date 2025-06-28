@@ -2,7 +2,7 @@
 max_entries = 1000
 
 [theme.header]
-foreground = "13"
+foreground = "8"
 background = ""
 bold = true
 
@@ -38,13 +38,13 @@ bold = false
 
 # Frame settings for dialogs (help, image viewer, text viewer)
 [theme.frame.border]
-foreground = "39"    # Blue border color
+foreground = "8"     # Grey border color (same as footer)
 background = ""
 bold = false
 
 [theme.frame.background]
 foreground = ""
-background = "235"   # Dark gray background
+background = ""      # Transparent background for better syntax highlighting
 bold = false
 
 [editor]

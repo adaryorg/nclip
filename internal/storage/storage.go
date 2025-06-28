@@ -1,6 +1,31 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package storage
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"os"
@@ -125,14 +150,54 @@ func (s *Storage) AddWithType(content, contentType string, imageData []byte) err
 		return nil
 	}
 
-	// Check if this content is already the most recent
-	var lastContent string
-	var lastType string
-	err := s.db.QueryRow("SELECT content, content_type FROM clipboard_items ORDER BY timestamp DESC LIMIT 1").Scan(&lastContent, &lastType)
-	if err == nil && lastContent == content && lastType == contentType {
-		return nil
+	// For text content, check if duplicate exists and update timestamp if found
+	if contentType == "text" {
+		var existingID string
+		query := "SELECT id FROM clipboard_items WHERE content = ? AND content_type = ? LIMIT 1"
+		err := s.db.QueryRow(query, content, contentType).Scan(&existingID)
+		if err == nil {
+			// Duplicate found, update timestamp
+			updateQuery := "UPDATE clipboard_items SET timestamp = ? WHERE id = ?"
+			_, err := s.db.Exec(updateQuery, time.Now(), existingID)
+			return err
+		}
+		if err != sql.ErrNoRows {
+			return err
+		}
+	} else if contentType == "image" {
+		// For images, we need to compare both content and image data
+		// Use a simpler approach to avoid database locks
+		query := "SELECT id, image_data FROM clipboard_items WHERE content = ? AND content_type = ?"
+		rows, err := s.db.Query(query, content, contentType)
+		if err != nil {
+			return err
+		}
+
+		var existingID string
+		for rows.Next() {
+			var tempID string
+			var tempImageData []byte
+			if err := rows.Scan(&tempID, &tempImageData); err != nil {
+				rows.Close()
+				return err
+			}
+			// Compare image data
+			if bytes.Equal(imageData, tempImageData) {
+				existingID = tempID
+				break
+			}
+		}
+		rows.Close()
+
+		if existingID != "" {
+			// Duplicate found, update timestamp
+			updateQuery := "UPDATE clipboard_items SET timestamp = ? WHERE id = ?"
+			_, err := s.db.Exec(updateQuery, time.Now(), existingID)
+			return err
+		}
 	}
 
+	// No duplicate found, create new entry
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	timestamp := time.Now()
 
@@ -140,7 +205,7 @@ func (s *Storage) AddWithType(content, contentType string, imageData []byte) err
 	threatLevel, safeEntry := calculateThreatLevel(content, contentType)
 
 	query := "INSERT INTO clipboard_items (id, content, content_type, image_data, timestamp, threat_level, safe_entry) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	_, err = s.db.Exec(query, id, content, contentType, imageData, timestamp, threatLevel, safeEntry)
+	_, err := s.db.Exec(query, id, content, contentType, imageData, timestamp, threatLevel, safeEntry)
 	if err != nil {
 		return err
 	}
@@ -223,6 +288,64 @@ func (s *Storage) Delete(id string) error {
 	query := "DELETE FROM clipboard_items WHERE id = ?"
 	_, err := s.db.Exec(query, id)
 	return err
+}
+
+// insertDirectly inserts data directly into the database bypassing deduplication (for testing)
+func (s *Storage) insertDirectly(id, content, contentType string, imageData []byte, timestamp time.Time, threatLevel string, safeEntry bool) error {
+	query := "INSERT INTO clipboard_items (id, content, content_type, image_data, timestamp, threat_level, safe_entry) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	_, err := s.db.Exec(query, id, content, contentType, imageData, timestamp, threatLevel, safeEntry)
+	return err
+}
+
+// DeduplicateExisting removes duplicate entries from the database, keeping the most recent one
+func (s *Storage) DeduplicateExisting() (int, error) {
+	// Get all items ordered by timestamp DESC (most recent first)
+	items := s.GetAll()
+	if len(items) <= 1 {
+		return 0, nil // Nothing to deduplicate
+	}
+
+	// Track seen content and count of removed duplicates
+	seenContent := make(map[string]string) // content+type -> ID of first (most recent) occurrence
+	var toDelete []string
+	removedCount := 0
+
+	for _, item := range items {
+		// Create a key for text content
+		if item.ContentType == "text" {
+			key := fmt.Sprintf("text:%s", item.Content)
+			if _, exists := seenContent[key]; exists {
+				// This is a duplicate, mark for deletion
+				toDelete = append(toDelete, item.ID)
+				removedCount++
+			} else {
+				// First occurrence, remember it
+				seenContent[key] = item.ID
+			}
+		} else if item.ContentType == "image" {
+			// For images, we need to compare both content and image data
+			// Create a key based on content + image data hash
+			imageHash := fmt.Sprintf("%x", item.ImageData) // Simple hex representation
+			key := fmt.Sprintf("image:%s:%s", item.Content, imageHash)
+			if _, exists := seenContent[key]; exists {
+				// This is a duplicate, mark for deletion
+				toDelete = append(toDelete, item.ID)
+				removedCount++
+			} else {
+				// First occurrence, remember it
+				seenContent[key] = item.ID
+			}
+		}
+	}
+
+	// Delete all duplicate entries
+	for _, id := range toDelete {
+		if err := s.Delete(id); err != nil {
+			return removedCount, fmt.Errorf("failed to delete duplicate entry %s: %w", id, err)
+		}
+	}
+
+	return removedCount, nil
 }
 
 func (s *Storage) Close() error {

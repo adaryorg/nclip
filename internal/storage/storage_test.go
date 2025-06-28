@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package storage
 
 import (
@@ -395,5 +419,394 @@ func TestClose(t *testing.T) {
 	err = storage.Close()
 	if err != nil {
 		t.Errorf("Multiple closes should not error: %v", err)
+	}
+}
+
+func TestComprehensiveDeduplication(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Add initial content
+	err := storage.Add("test content")
+	if err != nil {
+		t.Fatalf("Failed to add initial content: %v", err)
+	}
+
+	// Add different content
+	err = storage.Add("different content")
+	if err != nil {
+		t.Fatalf("Failed to add different content: %v", err)
+	}
+
+	// Add another different content
+	err = storage.Add("another content")
+	if err != nil {
+		t.Fatalf("Failed to add another content: %v", err)
+	}
+
+	// Now add duplicate of the first content (not the most recent)
+	originalItems := storage.GetAll()
+	if len(originalItems) != 3 {
+		t.Fatalf("Expected 3 items before duplicate, got %d", len(originalItems))
+	}
+
+	// Find the original "test content" item
+	var originalItem *ClipboardItem
+	for _, item := range originalItems {
+		if item.Content == "test content" {
+			originalItem = &item
+			break
+		}
+	}
+	if originalItem == nil {
+		t.Fatal("Could not find original 'test content' item")
+	}
+
+	// Add the duplicate
+	err = storage.Add("test content")
+	if err != nil {
+		t.Fatalf("Failed to add duplicate content: %v", err)
+	}
+
+	// Should still have 3 items (no new item created)
+	items := storage.GetAll()
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items after duplicate add, got %d", len(items))
+	}
+
+	// The "test content" should now be the most recent (first in the list)
+	if items[0].Content != "test content" {
+		t.Errorf("Expected 'test content' to be most recent, got '%s'", items[0].Content)
+	}
+
+	// The ID should be the same as the original (item was updated, not recreated)
+	if items[0].ID != originalItem.ID {
+		t.Errorf("Expected same ID for updated item, got %s instead of %s", items[0].ID, originalItem.ID)
+	}
+
+	// The timestamp should be newer than the original
+	if !items[0].Timestamp.After(originalItem.Timestamp) {
+		t.Error("Expected updated timestamp to be newer than original")
+	}
+}
+
+func TestImageDeduplication(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	imageData1 := []byte("fake image data 1")
+	imageSameAsFirst := []byte("fake image data 1") // Same as imageData1
+
+	// Add first image
+	err := storage.AddImage(imageData1, "image 1")
+	if err != nil {
+		t.Fatalf("Failed to add first image: %v", err)
+	}
+
+	items := storage.GetAll()
+	if len(items) != 1 {
+		t.Fatalf("Expected 1 item after adding first image, got %d", len(items))
+	}
+
+	// Record the original timestamp
+	originalTimestamp := items[0].Timestamp
+	originalID := items[0].ID
+
+	// Add some delay to ensure different timestamp
+	time.Sleep(2 * time.Millisecond)
+
+	// Now add image with same data and description - should be deduplicated
+	err = storage.AddImage(imageSameAsFirst, "image 1")
+	if err != nil {
+		t.Fatalf("Failed to add duplicate image: %v", err)
+	}
+
+	// Should still have 1 item (duplicate was not added)
+	items = storage.GetAll()
+	if len(items) != 1 {
+		t.Errorf("Expected 1 item after duplicate image add, got %d", len(items))
+	}
+
+	// Verify the item is the same but with updated timestamp
+	if items[0].ID != originalID {
+		t.Errorf("Expected same ID for updated item, got %s instead of %s", items[0].ID, originalID)
+	}
+
+	if !items[0].Timestamp.After(originalTimestamp) {
+		t.Error("Expected updated image timestamp to be newer")
+	}
+}
+
+func TestMixedContentDeduplication(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Add text content
+	err := storage.Add("mixed content")
+	if err != nil {
+		t.Fatalf("Failed to add text content: %v", err)
+	}
+
+	// Add image with same description - should not be deduplicated (different types)
+	imageData := []byte("image data")
+	err = storage.AddImage(imageData, "mixed content")
+	if err != nil {
+		t.Fatalf("Failed to add image content: %v", err)
+	}
+
+	items := storage.GetAll()
+	if len(items) != 2 {
+		t.Errorf("Expected 2 items for mixed content types, got %d", len(items))
+	}
+
+	// Verify we have both text and image entries
+	hasText := false
+	hasImage := false
+	for _, item := range items {
+		if item.Content == "mixed content" {
+			if item.ContentType == "text" {
+				hasText = true
+			} else if item.ContentType == "image" {
+				hasImage = true
+			}
+		}
+	}
+	if !hasText {
+		t.Error("Expected to find text content type")
+	}
+	if !hasImage {
+		t.Error("Expected to find image content type")
+	}
+}
+
+func TestDeduplicationWithTimestampUpdate(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Add content and record timestamp
+	err := storage.Add("timestamp test")
+	if err != nil {
+		t.Fatalf("Failed to add content: %v", err)
+	}
+
+	items := storage.GetAll()
+	if len(items) != 1 {
+		t.Fatalf("Expected 1 item, got %d", len(items))
+	}
+	originalTimestamp := items[0].Timestamp
+
+	// Wait a small amount to ensure timestamp difference
+	time.Sleep(2 * time.Millisecond)
+
+	// Add duplicate content
+	err = storage.Add("timestamp test")
+	if err != nil {
+		t.Fatalf("Failed to add duplicate content: %v", err)
+	}
+
+	// Should still have 1 item with updated timestamp
+	items = storage.GetAll()
+	if len(items) != 1 {
+		t.Errorf("Expected 1 item after duplicate, got %d", len(items))
+	}
+
+	if !items[0].Timestamp.After(originalTimestamp) {
+		t.Error("Expected timestamp to be updated for duplicate entry")
+	}
+}
+
+func TestDeduplicateExisting(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Manually insert duplicates by bypassing the new deduplication logic
+	id1 := fmt.Sprintf("%d", time.Now().UnixNano())
+	id2 := fmt.Sprintf("%d", time.Now().UnixNano()+1)
+	id3 := fmt.Sprintf("%d", time.Now().UnixNano()+2)
+	id4 := fmt.Sprintf("%d", time.Now().UnixNano()+3)
+
+	baseTime := time.Now()
+
+	// Insert duplicate text entries using direct insert to simulate old behavior
+	err := storage.insertDirectly(id1, "duplicate text", "text", nil, baseTime.Add(1*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	err = storage.insertDirectly(id2, "unique text", "text", nil, baseTime.Add(2*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	err = storage.insertDirectly(id3, "duplicate text", "text", nil, baseTime.Add(3*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	// Insert duplicate image entries
+	imageData := []byte("test image data")
+	err = storage.insertDirectly(id4, "test image", "image", imageData, baseTime.Add(4*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	// Verify we have 4 items initially
+	items := storage.GetAll()
+	if len(items) != 4 {
+		t.Fatalf("Expected 4 items before deduplication, got %d", len(items))
+	}
+
+	// Run deduplication
+	removedCount, err := storage.DeduplicateExisting()
+	if err != nil {
+		t.Fatalf("Failed to deduplicate: %v", err)
+	}
+
+	if removedCount != 1 {
+		t.Errorf("Expected to remove 1 duplicate, removed %d", removedCount)
+	}
+
+	// Verify we now have 3 unique items
+	items = storage.GetAll()
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items after deduplication, got %d", len(items))
+	}
+
+	// Verify the most recent "duplicate text" entry was kept
+	foundDuplicateText := false
+	for _, item := range items {
+		if item.Content == "duplicate text" {
+			foundDuplicateText = true
+			if item.ID != id3 { // id3 is more recent (baseTime + 3s)
+				t.Errorf("Expected to keep the most recent duplicate (ID: %s), but found ID: %s", id3, item.ID)
+			}
+		}
+	}
+	if !foundDuplicateText {
+		t.Error("Expected to find 'duplicate text' entry after deduplication")
+	}
+}
+
+func TestDeduplicateExistingImages(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Manually insert duplicate image entries
+	imageData1 := []byte("image data 1")
+	imageData2 := []byte("image data 2")
+
+	id1 := fmt.Sprintf("%d", time.Now().UnixNano())
+	id2 := fmt.Sprintf("%d", time.Now().UnixNano()+1)
+	id3 := fmt.Sprintf("%d", time.Now().UnixNano()+2)
+	id4 := fmt.Sprintf("%d", time.Now().UnixNano()+3)
+
+	baseTime := time.Now()
+
+	// Insert same description but different image data - should not be deduplicated
+	err := storage.insertDirectly(id1, "image", "image", imageData1, baseTime.Add(1*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	err = storage.insertDirectly(id2, "image", "image", imageData2, baseTime.Add(2*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	// Insert same description AND same image data - should be deduplicated
+	err = storage.insertDirectly(id3, "image", "image", imageData1, baseTime.Add(3*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	// Insert different content type but same content - should not be deduplicated
+	err = storage.insertDirectly(id4, "image", "text", nil, baseTime.Add(4*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	// Verify we have 4 items initially
+	items := storage.GetAll()
+	if len(items) != 4 {
+		t.Fatalf("Expected 4 items before deduplication, got %d", len(items))
+	}
+
+	// Run deduplication
+	removedCount, err := storage.DeduplicateExisting()
+	if err != nil {
+		t.Fatalf("Failed to deduplicate: %v", err)
+	}
+
+	if removedCount != 1 {
+		t.Errorf("Expected to remove 1 duplicate, removed %d", removedCount)
+	}
+
+	// Verify we now have 3 items
+	items = storage.GetAll()
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items after deduplication, got %d", len(items))
+	}
+
+	// Count items by type to verify correct deduplication
+	imageCount := 0
+	textCount := 0
+	for _, item := range items {
+		if item.ContentType == "image" {
+			imageCount++
+		} else if item.ContentType == "text" {
+			textCount++
+		}
+	}
+
+	if imageCount != 2 {
+		t.Errorf("Expected 2 image items after deduplication, got %d", imageCount)
+	}
+	if textCount != 1 {
+		t.Errorf("Expected 1 text item after deduplication, got %d", textCount)
+	}
+}
+
+func TestDeduplicateExistingEmptyDatabase(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Run deduplication on empty database
+	removedCount, err := storage.DeduplicateExisting()
+	if err != nil {
+		t.Fatalf("Failed to deduplicate empty database: %v", err)
+	}
+
+	if removedCount != 0 {
+		t.Errorf("Expected to remove 0 items from empty database, removed %d", removedCount)
+	}
+}
+
+func TestDeduplicateExistingNoDuplicates(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Add unique items using the normal Add method
+	err := storage.Add("unique text 1")
+	if err != nil {
+		t.Fatalf("Failed to add content: %v", err)
+	}
+
+	err = storage.Add("unique text 2")
+	if err != nil {
+		t.Fatalf("Failed to add content: %v", err)
+	}
+
+	imageData := []byte("unique image data")
+	err = storage.AddImage(imageData, "unique image")
+	if err != nil {
+		t.Fatalf("Failed to add image: %v", err)
+	}
+
+	// Run deduplication
+	removedCount, err := storage.DeduplicateExisting()
+	if err != nil {
+		t.Fatalf("Failed to deduplicate: %v", err)
+	}
+
+	if removedCount != 0 {
+		t.Errorf("Expected to remove 0 items (no duplicates), removed %d", removedCount)
+	}
+
+	// Verify all items are still there
+	items := storage.GetAll()
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items after deduplication, got %d", len(items))
 	}
 }

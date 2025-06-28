@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package ui
 
 import (
@@ -13,8 +37,8 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 	var content strings.Builder
 
 	// Create styles
-	selectedStyle := createStyle(m.config.Theme.Selected)
-	statusStyle := createStyle(m.config.Theme.Status)
+	selectedStyle := m.createSelectedStyle(m.config.Theme.Selected)
+	statusStyle := m.createStyle(m.config.Theme.Status)
 
 	if len(m.filteredItems) == 0 {
 		// Center "no items" message
@@ -58,32 +82,51 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 		item := m.filteredItems[itemIndex]
 		displayLines := m.getItemDisplayLines(item, contentWidth)
 
-		// Check if we have room for this entire entry
-		if linesUsed+len(displayLines) > contentHeight {
-			break
-		}
+		// Get colored security icon for non-selected items
+		coloredSecurityIcon := m.getSecurityIcon(item)
+		plainSecurityIcon := m.getPlainSecurityIcon(item)
 
-		// Render the entry
-		for _, line := range displayLines {
+		// Render the entry, showing as many lines as fit
+		linesRendered := 0
+		for lineIndex, line := range displayLines {
+			if linesUsed >= contentHeight {
+				break
+			}
+
+			displayLine := line
+			
+			// For non-selected items, replace plain icon with colored icon on first line
+			if itemIndex != m.cursor && lineIndex == 0 && plainSecurityIcon != "" && coloredSecurityIcon != "" {
+				// Replace the plain icon at the beginning with colored one
+				if strings.HasPrefix(line, plainSecurityIcon+" ") {
+					displayLine = strings.Replace(line, plainSecurityIcon+" ", coloredSecurityIcon+" ", 1)
+				}
+			}
+
 			if itemIndex == m.cursor {
-				// Selected item uses selected style with padding
+				// Selected item uses selected style with padding (keeps plain icon for consistent highlighting)
 				content.WriteString(selectedStyle.Render(" " + line + " "))
 			} else {
-				// Non-selected items use consistent styling
-				content.WriteString("  " + line)
+				// Non-selected items use colored icons
+				content.WriteString("  " + displayLine)
 			}
 			content.WriteString("\n")
 			linesUsed++
+			linesRendered++
 		}
 
-		// Add separator line between entries (except for the last entry)
-		if i < len(visibleItems)-1 && linesUsed < contentHeight {
+		// Only add separator if we fully rendered this item and have space for more
+		shouldAddSeparator := i < len(visibleItems)-1 && 
+			linesRendered == len(displayLines) && 
+			linesUsed < contentHeight
+
+		if shouldAddSeparator {
 			separatorChar := "─"
 			separatorWidth := contentWidth - 4 // Account for padding
 			if separatorWidth > 0 {
 				separator := strings.Repeat(separatorChar, separatorWidth)
 				// Use a subtle color for the separator
-				separatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238")) // medium dark gray
+				separatorStyle := lipgloss.NewStyle().Foreground(m.parseColor("238")) // medium dark gray
 				content.WriteString("  " + separatorStyle.Render(separator))
 				content.WriteString("\n")
 				linesUsed++
@@ -91,10 +134,16 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 		}
 	}
 
-	// Fill remaining space with empty lines
-	for linesUsed < contentHeight {
-		content.WriteString("\n")
-		linesUsed++
+	// Only fill remaining space with empty lines if we've reached the end of all items
+	if len(visibleItems) > 0 {
+		lastVisibleIndex := visibleItems[len(visibleItems)-1]
+		if lastVisibleIndex == len(m.filteredItems)-1 {
+			// We're showing the last item, so fill remaining space
+			for linesUsed < contentHeight {
+				content.WriteString("\n")
+				linesUsed++
+			}
+		}
 	}
 
 	return content.String()
@@ -143,10 +192,12 @@ func (m Model) calculateVisibleItems(contentHeight, contentWidth int) (int, []in
 	// Build list of visible items from start position
 	linesUsed := 0
 	for i := start; i < len(m.filteredItems) && linesUsed < contentHeight; i++ {
-		if linesUsed+itemLines[i] <= contentHeight {
-			visibleItems = append(visibleItems, i)
-			linesUsed += itemLines[i]
-		} else {
+		// Always include the item, even if it will only partially fit
+		visibleItems = append(visibleItems, i)
+		linesUsed += itemLines[i]
+		
+		// If we've filled the available space, we can stop
+		if linesUsed >= contentHeight {
 			break
 		}
 	}
@@ -191,8 +242,8 @@ func (m Model) calculateVisibleItemsFromCursor(contentHeight, contentWidth int, 
 		linesUsed := itemLines[m.cursor]
 		visibleItems = []int{m.cursor}
 
-		// Add items above cursor
-		for i := m.cursor - 1; i >= 0 && linesUsed+itemLines[i] <= contentHeight; i-- {
+		// Add items above cursor, allowing partial items
+		for i := m.cursor - 1; i >= 0 && linesUsed < contentHeight; i-- {
 			start = i
 			visibleItems = append([]int{i}, visibleItems...)
 			linesUsed += itemLines[i]
@@ -203,8 +254,8 @@ func (m Model) calculateVisibleItemsFromCursor(contentHeight, contentWidth int, 
 		linesUsed := itemLines[m.cursor]
 		visibleItems = []int{m.cursor}
 
-		// Add items below cursor
-		for i := m.cursor + 1; i < len(m.filteredItems) && linesUsed+itemLines[i] <= contentHeight; i++ {
+		// Add items below cursor, allowing partial items
+		for i := m.cursor + 1; i < len(m.filteredItems) && linesUsed < contentHeight; i++ {
 			visibleItems = append(visibleItems, i)
 			linesUsed += itemLines[i]
 		}
@@ -227,18 +278,24 @@ func (m Model) getItemDisplayLines(item storage.ClipboardItem, availableWidth in
 		effectiveWidth = 20 // fallback
 	}
 
-	// Get security icon for this item
-	securityIcon := m.getSecurityIcon(item)
-	iconPrefix := ""
-	if securityIcon != "" {
-		iconPrefix = securityIcon + " "
-		effectiveWidth -= 3 // Account for icon and space
+	// Get plain security icon (without ANSI colors) for display line generation
+	plainSecurityIcon := m.getPlainSecurityIcon(item)
+	firstLineWidth := effectiveWidth
+	if plainSecurityIcon != "" {
+		firstLineWidth = effectiveWidth - 4 // Account for icon "[!] " or "[?] "
+		if firstLineWidth <= 0 {
+			firstLineWidth = 10 // fallback
+		}
 	}
 
 	// Handle image items differently
 	if item.ContentType == "image" {
 		// Show descriptive text line for images (Content already includes size info)
-		displayLines = []string{fmt.Sprintf("%s%s - Press 'v' to view, 'e' to edit", iconPrefix, item.Content)}
+		imageDesc := fmt.Sprintf("%s - Press 'v' to view, 'e' to edit", item.Content)
+		if plainSecurityIcon != "" {
+			imageDesc = plainSecurityIcon + " " + imageDesc
+		}
+		displayLines = wrapText(imageDesc, effectiveWidth, maxLines)
 	} else {
 		// Regular text content
 		if isMultiline {
@@ -251,10 +308,10 @@ func (m Model) getItemDisplayLines(item storage.ClipboardItem, availableWidth in
 					break
 				}
 
-				// Add icon prefix only to first line
+				// Add plain security icon to first line only
 				lineContent := line
-				if j == 0 {
-					lineContent = iconPrefix + line
+				if j == 0 && plainSecurityIcon != "" {
+					lineContent = plainSecurityIcon + " " + line
 				}
 
 				// Wrap long lines within multiline entries
@@ -263,7 +320,10 @@ func (m Model) getItemDisplayLines(item storage.ClipboardItem, availableWidth in
 			}
 		} else {
 			// Single line entry - wrap to show full content up to 5 lines
-			contentWithIcon := iconPrefix + item.Content
+			contentWithIcon := item.Content
+			if plainSecurityIcon != "" {
+				contentWithIcon = plainSecurityIcon + " " + item.Content
+			}
 			displayLines = wrapText(contentWithIcon, effectiveWidth, maxLines)
 		}
 	}

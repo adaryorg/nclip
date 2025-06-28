@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package ui
 
 import (
@@ -130,34 +154,11 @@ type SecurityIndicators struct {
 
 // GetSecurityIndicators returns appropriate security indicators based on terminal capabilities
 func GetSecurityIndicators(caps TerminalCapabilities) SecurityIndicators {
-	if caps.SupportsEmoji {
-		// Use emoji icons for modern terminals
-		return SecurityIndicators{
-			HighRisk:   "🔒",
-			MediumRisk: "⚠️",
-			Clean:      "",
-		}
-	} else if caps.SupportsUnicode {
-		// Use Unicode symbols for terminals that support Unicode but not emoji
-		return SecurityIndicators{
-			HighRisk:   "⚡", // Lightning bolt for high risk
-			MediumRisk: "⚪", // White circle for medium risk
-			Clean:      "",
-		}
-	} else if caps.SupportsColor {
-		// Use colored ASCII characters for basic terminals with color support
-		return SecurityIndicators{
-			HighRisk:   "!", // Red exclamation mark
-			MediumRisk: "?", // Yellow question mark
-			Clean:      "",
-		}
-	} else {
-		// Plain ASCII for very basic terminals
-		return SecurityIndicators{
-			HighRisk:   "[H]", // [H] for High risk
-			MediumRisk: "[M]", // [M] for Medium risk
-			Clean:      "",
-		}
+	// Use simple ASCII characters for all terminals
+	return SecurityIndicators{
+		HighRisk:   "[!]",
+		MediumRisk: "[?]",
+		Clean:      "",
 	}
 }
 
@@ -170,16 +171,10 @@ func GetColorizedSecurityIndicator(indicator string, riskLevel string, caps Term
 	// Apply colors based on risk level
 	switch riskLevel {
 	case "high":
-		if caps.SupportsEmoji || caps.SupportsUnicode {
-			return indicator // Emoji/Unicode symbols are self-colored
-		}
-		// Red for high risk ASCII indicators
+		// Red for high risk indicators
 		return "\033[91m" + indicator + "\033[0m" // Bright red
 	case "medium":
-		if caps.SupportsEmoji || caps.SupportsUnicode {
-			return indicator // Emoji/Unicode symbols are self-colored
-		}
-		// Yellow for medium risk ASCII indicators
+		// Yellow for medium risk indicators
 		return "\033[93m" + indicator + "\033[0m" // Bright yellow
 	default:
 		return indicator
@@ -220,13 +215,5 @@ func (s *SecurityIconHelper) GetCapabilities() TerminalCapabilities {
 
 // GetIndicatorDescription returns a human-readable description of the indicators
 func (s *SecurityIconHelper) GetIndicatorDescription() string {
-	if s.caps.SupportsEmoji {
-		return "Icons: 🔒=high risk ⚠️=medium risk"
-	} else if s.caps.SupportsUnicode {
-		return "Icons: ⚡=high risk ⚪=medium risk"
-	} else if s.caps.SupportsColor {
-		return "Icons: !=high risk ?=medium risk"
-	} else {
-		return "Icons: [H]=high risk [M]=medium risk"
-	}
+	return "Icons: [!]=high risk [?]=medium risk"
 }

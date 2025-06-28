@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2025 Yuval Adar <adary@adary.org>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package ui
 
 import (
@@ -5,6 +29,8 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +53,7 @@ const (
 	modeSecurityWarning
 	modeHelp
 	modeTextView
+	modeImageSecurityWarning
 )
 
 type Model struct {
@@ -37,6 +64,9 @@ type Model struct {
 	cursor          int
 	searchQuery     string
 	currentMode     mode
+	
+	// Content filtering
+	filterMode      string // "", "images", "security-high", "security-medium"
 	width           int
 	height          int
 	deleteCandidate *storage.ClipboardItem
@@ -50,7 +80,11 @@ type Model struct {
 	hashStore       *security.HashStore
 
 	// Terminal capabilities
-	iconHelper *SecurityIconHelper
+	iconHelper          *SecurityIconHelper
+	useBasicColors      bool // Track if we should use basic colors only
+
+	// Syntax highlighting
+	codeDetector *CodeDetector
 
 	// Help screen state
 	helpScrollOffset int
@@ -60,22 +94,92 @@ type Model struct {
 	textScrollOffset   int
 	textDeletePending  bool // Track if delete confirmation is pending in text view
 	imageDeletePending bool // Track if delete confirmation is pending in image view
+
+	// Security viewer state  
+	securityDeletePending bool // Track if delete confirmation is pending in security view
+	securityScrollOffset  int  // Track scroll position in security content
+}
+
+// detectTerminalCapabilities checks if the terminal supports advanced colors and styling
+func detectTerminalCapabilities() bool {
+	// Check COLORTERM environment variable first - this overrides everything
+	colorTerm := os.Getenv("COLORTERM")
+	if colorTerm == "truecolor" || colorTerm == "24bit" {
+		return true
+	}
+
+	// Check for modern terminal indicators
+	modernIndicators := []string{
+		"ITERM_SESSION_ID",    // iTerm2
+		"KITTY_WINDOW_ID",     // Kitty
+		"ALACRITTY_SOCKET",    // Alacritty
+		"WEZTERM_PANE",        // WezTerm
+		"GHOSTTY_RESOURCES_DIR", // Ghostty
+	}
+
+	for _, indicator := range modernIndicators {
+		if os.Getenv(indicator) != "" {
+			return true
+		}
+	}
+
+	// Check if terminal claims to support colors
+	if colors := os.Getenv("COLORS"); colors != "" {
+		if numColors, err := strconv.Atoi(colors); err == nil && numColors >= 256 {
+			return true
+		}
+	}
+
+	// Check terminal type
+	term := strings.ToLower(os.Getenv("TERM"))
+	
+	// Check for enhanced terminal variants first
+	if strings.Contains(term, "256") || strings.Contains(term, "color") {
+		return true
+	}
+
+	// Known terminals with limited color support
+	basicTerminals := []string{
+		"xterm",      // Basic xterm
+		"screen",     // GNU Screen
+		"tmux",       // tmux (basic mode)
+		"linux",      // Linux console
+		"cons25",     // FreeBSD console
+		"vt100",      // VT100 compatible
+		"vt220",      // VT220 compatible
+		"ansi",       // Basic ANSI terminal
+		"dumb",       // Dumb terminal
+	}
+
+	// Check if it's a known basic terminal
+	for _, basicTerm := range basicTerminals {
+		if strings.HasPrefix(term, basicTerm) {
+			return false
+		}
+	}
+
+	// Default to advanced for unknown terminals
+	return true
 }
 
 func NewModel(s *storage.Storage, cfg *config.Config) Model {
 	items := s.GetAll()
 	hashStore, _ := security.NewHashStore() // Initialize security hash store
 	iconHelper := NewSecurityIconHelper()   // Initialize terminal detection
+	useBasicColors := !detectTerminalCapabilities()
+	codeDetector := NewCodeDetector() // Initialize syntax highlighting
 
 	return Model{
-		storage:       s,
-		config:        cfg,
-		items:         items,
-		filteredItems: items,
-		cursor:        0,
-		currentMode:   modeList,
-		hashStore:     hashStore,
-		iconHelper:    iconHelper,
+		storage:        s,
+		config:         cfg,
+		items:          items,
+		filteredItems:  items,
+		cursor:         0,
+		currentMode:    modeList,
+		hashStore:      hashStore,
+		iconHelper:     iconHelper,
+		useBasicColors: useBasicColors,
+		codeDetector:   codeDetector,
 	}
 }
 
@@ -83,10 +187,15 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// parseColor converts various color formats to lipgloss.Color
-func parseColor(colorStr string) lipgloss.Color {
+// parseColor converts various color formats to lipgloss.Color with basic terminal fallback
+func (m Model) parseColor(colorStr string) lipgloss.Color {
 	if colorStr == "" {
 		return lipgloss.Color("")
+	}
+
+	// If using basic colors, map advanced colors to basic ANSI colors
+	if m.useBasicColors {
+		return m.mapToBasicColor(colorStr)
 	}
 
 	// Check if it's a hex color
@@ -143,15 +252,127 @@ func parseColor(colorStr string) lipgloss.Color {
 	return lipgloss.Color(colorStr)
 }
 
-// createStyle creates a lipgloss style from a ColorConfig
-func createStyle(colorCfg config.ColorConfig) lipgloss.Style {
+// mapToBasicColor maps advanced colors to basic ANSI colors for limited terminals
+func (m Model) mapToBasicColor(colorStr string) lipgloss.Color {
+	// Return empty color if not specified
+	if colorStr == "" {
+		return lipgloss.Color("")
+	}
+
+	colorStr = strings.ToLower(colorStr)
+
+	// Map hex colors and complex colors to basic ANSI colors
+	basicColorMap := map[string]string{
+		// Direct ANSI colors (keep as-is if they're basic)
+		"0": "0", "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7",
+		"10": "10", "11": "11", "12": "12", "14": "14",
+
+		// CSS color names to basic ANSI
+		"black":     "0",
+		"red":       "1",
+		"green":     "2",
+		"yellow":    "3",
+		"blue":      "4",
+		"magenta":   "5",
+		"cyan":      "6",
+		"white":     "7",
+		"gray":      "8",
+		"grey":      "8",
+		"darkred":   "1",
+		"darkgreen": "2",
+		"darkblue":  "4",
+		"orange":    "3", // Map to yellow
+		"purple":    "5", // Map to magenta
+		"pink":      "5", // Map to magenta
+		"brown":     "1", // Map to red
+		"lime":      "2", // Map to green
+		"navy":      "4", // Map to blue
+		"maroon":    "1", // Map to red
+		"olive":     "3", // Map to yellow
+		"teal":      "6", // Map to cyan
+		"silver":    "7", // Map to white
+		"gold":      "3", // Map to yellow
+
+		// Complex color codes - map to closest basic color
+		"234": "0", "235": "0", "236": "8", "237": "8", "238": "8", "239": "8",
+		"13": "5",   // Default header color -> magenta
+		"8": "8",    // Default status color -> gray  
+		"141": "5",  // Default search color -> magenta
+		"9": "1",    // Default warning color -> red
+		"15": "7",   // Default selected foreground -> white
+		"55": "4",   // Default selected background -> blue
+		"39": "6",   // Default frame border -> cyan
+	}
+
+	// Check if it's a hex color and map to nearest basic color
+	if strings.HasPrefix(colorStr, "#") {
+		return m.mapHexToBasicColor(colorStr)
+	}
+
+	// Look up in basic color map
+	if basicColor, exists := basicColorMap[colorStr]; exists {
+		return lipgloss.Color(basicColor)
+	}
+
+	// For unknown colors, return empty to use terminal default
+	return lipgloss.Color("")
+}
+
+// mapHexToBasicColor maps hex colors to the nearest basic ANSI color
+func (m Model) mapHexToBasicColor(hexColor string) lipgloss.Color {
+	// Simple mapping of common hex colors to basic ANSI
+	hexToBasic := map[string]string{
+		"#000000": "0", // black
+		"#800000": "1", // red
+		"#008000": "2", // green
+		"#808000": "3", // yellow
+		"#000080": "4", // blue
+		"#800080": "5", // magenta
+		"#008080": "6", // cyan
+		"#c0c0c0": "7", // white
+		"#808080": "8", // gray
+		"#ff0000": "1", // bright red
+		"#00ff00": "2", // bright green
+		"#ffff00": "3", // bright yellow
+		"#0000ff": "4", // bright blue
+		"#ff00ff": "5", // bright magenta
+		"#00ffff": "6", // bright cyan
+		"#ffffff": "7", // bright white
+	}
+
+	if basicColor, exists := hexToBasic[strings.ToLower(hexColor)]; exists {
+		return lipgloss.Color(basicColor)
+	}
+
+	// For unknown hex colors, try to determine closest basic color
+	// This is a simplified approach - just return empty for terminal default
+	return lipgloss.Color("")
+}
+
+// createStyle creates a lipgloss style from a ColorConfig without background
+func (m Model) createStyle(colorCfg config.ColorConfig) lipgloss.Style {
 	style := lipgloss.NewStyle()
 
 	if colorCfg.Foreground != "" {
-		style = style.Foreground(parseColor(colorCfg.Foreground))
+		style = style.Foreground(m.parseColor(colorCfg.Foreground))
+	}
+	// Background colors removed to prevent interference with syntax highlighting
+	if colorCfg.Bold {
+		style = style.Bold(true)
+	}
+
+	return style
+}
+
+// createSelectedStyle creates a lipgloss style for selected items (with background)
+func (m Model) createSelectedStyle(colorCfg config.ColorConfig) lipgloss.Style {
+	style := lipgloss.NewStyle()
+
+	if colorCfg.Foreground != "" {
+		style = style.Foreground(m.parseColor(colorCfg.Foreground))
 	}
 	if colorCfg.Background != "" {
-		style = style.Background(parseColor(colorCfg.Background))
+		style = style.Background(m.parseColor(colorCfg.Background))
 	}
 	if colorCfg.Bold {
 		style = style.Bold(true)
@@ -201,8 +422,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.currentMode == modeSecurityWarning {
-			// In security warning mode
+			// In security warning mode - use same logic as text view
+			contentLines := m.getSecurityViewLines()
+			dialogHeight := m.height - 2      // 1 char padding top and bottom
+			contentHeight := dialogHeight - 4 // Border + header + footer
+			if contentHeight < 5 {
+				contentHeight = 5
+			}
+			maxScrollOffset := len(contentLines) - contentHeight
+			if maxScrollOffset < 0 {
+				maxScrollOffset = 0
+			}
+
 			switch msg.String() {
+			case "up", "k":
+				// Scroll up - same logic as text view
+				if !m.securityDeletePending && m.securityScrollOffset > 0 {
+					m.securityScrollOffset--
+				}
+				return m, nil
+			case "down", "j":
+				// Scroll down - same logic as text view
+				if !m.securityDeletePending && m.securityScrollOffset < maxScrollOffset {
+					m.securityScrollOffset++
+				}
+				return m, nil
+			case "pgup":
+				// Page up - same logic as text view
+				if !m.securityDeletePending {
+					newOffset := m.securityScrollOffset - contentHeight
+					if newOffset < 0 {
+						newOffset = 0
+					}
+					m.securityScrollOffset = newOffset
+				}
+				return m, nil
+			case "pgdown":
+				// Page down - same logic as text view
+				if !m.securityDeletePending {
+					newOffset := m.securityScrollOffset + contentHeight
+					if newOffset > maxScrollOffset {
+						newOffset = maxScrollOffset
+					}
+					m.securityScrollOffset = newOffset
+				}
+				return m, nil
+			case "home":
+				// Go to top - same logic as text view
+				if !m.securityDeletePending {
+					m.securityScrollOffset = 0
+				}
+				return m, nil
+			case "end":
+				// Go to bottom - same logic as text view
+				if !m.securityDeletePending {
+					m.securityScrollOffset = maxScrollOffset
+				}
+				return m, nil
 			case "s":
 				// Mark as safe
 				if m.securityItem != nil {
@@ -216,6 +492,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.securityItem = updatedItem
 					}
 				}
+				// Exit security view after marking
+				m.currentMode = modeList
+				m.securityContent = ""
+				m.securityThreats = nil
+				m.securityItem = nil
+				m.securityDeletePending = false
+				m.securityScrollOffset = 0
 				return m, nil
 			case "u":
 				// Mark as unsafe
@@ -230,51 +513,77 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.securityItem = updatedItem
 					}
 				}
+				// Exit security view after marking
+				m.currentMode = modeList
+				m.securityContent = ""
+				m.securityThreats = nil
+				m.securityItem = nil
+				m.securityDeletePending = false
+				m.securityScrollOffset = 0
 				return m, nil
-			case "y":
-				// Remove from main database and add to security hash store
-				if m.hashStore != nil {
-					contentHash := security.CreateHash(m.securityContent)
-					if len(m.securityThreats) > 0 {
-						m.hashStore.AddHash(contentHash, m.securityThreats[0])
+			case "d":
+				if m.securityDeletePending {
+					// Confirm deletion
+					// Remove from main database and add to security hash store
+					if m.hashStore != nil {
+						contentHash := security.CreateHash(m.securityContent)
+						if len(m.securityThreats) > 0 {
+							m.hashStore.AddHash(contentHash, m.securityThreats[0])
+						}
 					}
-				}
 
-				// Find and remove the item from main database
-				if m.securityItem != nil {
-					m.storage.Delete(m.securityItem.ID)
-				}
+					// Find and remove the item from main database
+					if m.securityItem != nil {
+						m.storage.Delete(m.securityItem.ID)
+					}
 
-				// Refresh items list
-				m.items = m.storage.GetAll()
-				m.filterItems()
-				if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
-					m.cursor = len(m.filteredItems) - 1
-				} else if len(m.filteredItems) == 0 {
-					m.cursor = 0
-				}
+					// Refresh items list
+					m.items = m.storage.GetAll()
+					m.filterItems()
+					if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
+						m.cursor = len(m.filteredItems) - 1
+					} else if len(m.filteredItems) == 0 {
+						m.cursor = 0
+					}
 
-				m.currentMode = modeList
-				m.securityContent = ""
-				m.securityThreats = nil
-				m.securityItem = nil
-				return m, nil
-			case "n", "enter":
-				// Close without changes
-				m.currentMode = modeList
-				m.securityContent = ""
-				m.securityThreats = nil
-				m.securityItem = nil
-				return m, nil
-			case "ctrl+c", "q", "esc":
+					m.currentMode = modeList
+					m.securityContent = ""
+					m.securityThreats = nil
+					m.securityItem = nil
+					m.securityDeletePending = false
+					m.securityScrollOffset = 0
+					return m, nil
+				} else {
+					// First 'd' press - enter delete confirmation mode
+					m.securityDeletePending = true
+					return m, nil
+				}
+			case "ctrl+c":
 				return m, tea.Quit
-			default:
-				// Any other key goes back to list
+			case "q":
+				// q should exit view, not application 
 				m.currentMode = modeList
 				m.securityContent = ""
 				m.securityThreats = nil
 				m.securityItem = nil
+				m.securityDeletePending = false
+				m.securityScrollOffset = 0
 				return m, nil
+			default:
+				// Any other key cancels delete confirmation or exits view
+				if m.securityDeletePending {
+					m.securityDeletePending = false
+					return m, nil
+				} else {
+					// Exit security view only if not a scroll key for short content
+					m.currentMode = modeList
+					m.securityContent = ""
+					m.securityThreats = nil
+					m.securityItem = nil
+					m.securityDeletePending = false
+					m.securityScrollOffset = 0
+					return m, nil
+				}
 			}
 		} else if m.currentMode == modeHelp {
 			// In help mode - calculate scroll bounds first
@@ -416,6 +725,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// First press - show confirmation
 						m.textDeletePending = true
 						return m, nil
+					}
+				}
+				return m, nil
+			case "s":
+				// Mark as safe - only available for items with security warnings
+				if m.viewingText != nil && (m.viewingText.ThreatLevel == "high" || m.viewingText.ThreatLevel == "medium") {
+					err := m.storage.UpdateSafeEntry(m.viewingText.ID, true)
+					if err == nil {
+						// Update the current viewing item
+						m.viewingText.SafeEntry = true
+						m.viewingText.ThreatLevel = "none" // Clear threat level when marked as safe
+						
+						// Update the main items list
+						m.items = m.storage.GetAll()
+						m.filterItems()
 					}
 				}
 				return m, nil
@@ -697,8 +1021,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Always show security dialog, even if no threats found
 						m.ShowSecurityWarning(selectedItem, threats)
 						return m, nil
+					} else {
+						// Show warning that security scanning is not available for images
+						m.currentMode = modeImageSecurityWarning
+						return m, nil
 					}
 				}
+
+			case "i":
+				// Toggle image filter
+				if m.filterMode == "images" {
+					m.filterMode = "" // Clear filter
+				} else {
+					m.filterMode = "images" // Show only images
+				}
+				m.filterItems()
+				return m, nil
+				
+			case "!":
+				// Toggle high-risk security filter
+				if m.filterMode == "security-high" {
+					m.filterMode = "" // Clear filter
+				} else {
+					m.filterMode = "security-high" // Show only high-risk items
+				}
+				m.filterItems()
+				return m, nil
+				
+			case "?":
+				// Toggle medium-risk security filter
+				if m.filterMode == "security-medium" {
+					m.filterMode = "" // Clear filter
+				} else {
+					m.filterMode = "security-medium" // Show only medium-risk items
+				}
+				m.filterItems()
+				return m, nil
 
 			case "h":
 				// Show help screen
@@ -713,17 +1071,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) filterItems() {
-	if m.searchQuery == "" {
-		m.filteredItems = m.items
-		m.cursor = 0
-		return
+	// Start with all items
+	items := m.items
+	
+	// Apply content filtering first
+	if m.filterMode != "" {
+		items = m.applyContentFilter(items)
 	}
+	
+	// Apply search query if present
+	if m.searchQuery == "" {
+		m.filteredItems = items
+	} else {
+		m.filteredItems = m.applySearchFilter(items)
+	}
+	
+	// Reset cursor if it's out of bounds
+	if m.cursor >= len(m.filteredItems) {
+		m.cursor = 0
+	}
+}
 
-	// When filtering, only include text items (images can't be searched)
+// applyContentFilter filters items based on content type or security status
+func (m *Model) applyContentFilter(items []storage.ClipboardItem) []storage.ClipboardItem {
+	var filtered []storage.ClipboardItem
+	
+	switch m.filterMode {
+	case "images":
+		// Show only images
+		for _, item := range items {
+			if item.ContentType == "image" {
+				filtered = append(filtered, item)
+			}
+		}
+	case "security-high":
+		// Show only high-risk security items
+		for _, item := range items {
+			if item.ThreatLevel == "high" {
+				filtered = append(filtered, item)
+			}
+		}
+	case "security-medium":
+		// Show only medium-risk security items
+		for _, item := range items {
+			if item.ThreatLevel == "medium" {
+				filtered = append(filtered, item)
+			}
+		}
+	default:
+		return items
+	}
+	
+	return filtered
+}
+
+// applySearchFilter applies fuzzy search filtering to items
+func (m *Model) applySearchFilter(items []storage.ClipboardItem) []storage.ClipboardItem {
+	// When searching, only include text items (images can't be searched)
 	var textItems []storage.ClipboardItem
 	var searchTargets []string
 
-	for _, item := range m.items {
+	for _, item := range items {
 		if item.ContentType != "image" {
 			textItems = append(textItems, item)
 			searchTargets = append(searchTargets, item.Content)
@@ -744,11 +1152,7 @@ func (m *Model) filterItems() {
 		}
 	}
 
-	m.filteredItems = filteredMatches
-
-	if m.cursor >= len(m.filteredItems) {
-		m.cursor = 0
-	}
+	return filteredMatches
 }
 
 type editCompleteMsg struct {
@@ -937,6 +1341,10 @@ func (m Model) View() string {
 		return m.renderSecurityWarning()
 	}
 
+	if m.currentMode == modeImageSecurityWarning {
+		return m.renderImageSecurityWarning()
+	}
+
 	if m.currentMode == modeHelp {
 		return m.renderHelp()
 	}
@@ -995,12 +1403,23 @@ func (m Model) renderMainWindow() string {
 	case modeConfirmDelete:
 		footerText = "Press 'd' again to delete, any other key to cancel"
 	case modeSearch:
-		footerText = "type filter text • enter: apply filter • esc: cancel"
+		footerText = "type filter text - enter: apply filter - esc: cancel"
 	default:
+		// Add filter status if active
+		filterStatus := ""
+		switch m.filterMode {
+		case "images":
+			filterStatus = " [IMAGES ONLY]"
+		case "security-high":
+			filterStatus = " [HIGH RISK ONLY]"
+		case "security-medium":
+			filterStatus = " [MEDIUM RISK ONLY]"
+		}
+		
 		if m.searchQuery != "" {
-			footerText = "↑/↓: navigate • /: edit filter • c: clear • enter: copy • v: view • e: edit • h: help • q: quit"
+			footerText = "up/down: navigate - /: edit filter - c: clear - enter: copy - v: view - e: edit - h: help - q: quit" + filterStatus
 		} else {
-			footerText = "↑/↓: navigate • /: search • enter: copy • v: view • e: edit • h: help • q: quit"
+			footerText = "up/down: navigate - /: search - enter: copy - v: view - e: edit - h: help - q: quit" + filterStatus
 		}
 	}
 
@@ -1066,13 +1485,13 @@ func (m Model) renderImageDebugView() string {
 	debugContent := fmt.Sprintf(`Image Viewer Debug Information
 
 Terminal Detection Results:
-• TERM_PROGRAM: %q
-• TERM: %q  
-• KITTY_WINDOW_ID: %q
-• WEZTERM_EXECUTABLE: %q
-• WEZTERM_PANE: %q
-• KONSOLE_VERSION: %q
-• FOOT_PID: %q
+- TERM_PROGRAM: %q
+- TERM: %q  
+- KITTY_WINDOW_ID: %q
+- WEZTERM_EXECUTABLE: %q
+- WEZTERM_PANE: %q
+- KONSOLE_VERSION: %q
+- FOOT_PID: %q
 
 Detection Logic:
 ✗ Not detected as supporting Kitty graphics protocol
@@ -1151,7 +1570,7 @@ func (m Model) renderSimpleImageView() string {
 	if m.imageDeletePending {
 		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
 	} else {
-		footerText = "o: open • enter: copy • e: edit • d: delete • any other key: close"
+		footerText = "o: open - enter: copy - e: edit - d: delete - any other key: close"
 	}
 
 	// Build frame content using standard function (like help view)
@@ -1163,8 +1582,8 @@ func (m Model) renderSimpleImageView() string {
 func (m Model) drawImageFrame(startX, startY, width, height int, format string, imgWidth, imgHeight int) string {
 	var result strings.Builder
 
-	headerStyle := createStyle(m.config.Theme.Header).Bold(true).Foreground(lipgloss.Color("35"))
-	statusStyle := createStyle(m.config.Theme.Status).Foreground(lipgloss.Color("248"))
+	headerStyle := m.createStyle(m.config.Theme.Header).Bold(true).Foreground(m.parseColor("35"))
+	statusStyle := m.createStyle(m.config.Theme.Status).Foreground(m.parseColor("248"))
 
 	// Top border
 	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY, startX))
@@ -1214,7 +1633,7 @@ func (m Model) drawImageFrame(startX, startY, width, height int, format string, 
 	if m.imageDeletePending {
 		footerText = " Press 'd' again to confirm deletion, any other key to cancel "
 	} else {
-		footerText = " o: open • enter: copy • e: edit • d: delete • any other key: close "
+		footerText = " o: open - enter: copy - e: edit - d: delete - any other key: close "
 	}
 	if len(footerText) > width-2 {
 		footerText = footerText[:width-5] + "... "
@@ -1271,108 +1690,396 @@ func (m *Model) ShowSecurityWarning(item storage.ClipboardItem, threats []securi
 	m.securityContent = item.Content
 	m.securityThreats = threats
 	m.securityItem = &item
+	m.securityDeletePending = false // Reset delete confirmation state
+	m.securityScrollOffset = 0     // Reset scroll position
 	m.currentMode = modeSecurityWarning
 }
 
-// renderSecurityWarning renders the security warning dialog
-func (m Model) renderSecurityWarning() string {
-	headerStyle := createStyle(m.config.Theme.Header).Padding(0, 1)
-	warningStyle := createStyle(m.config.Theme.Warning).Padding(0, 1)
-	statusStyle := createStyle(m.config.Theme.Status).Padding(0, 1)
+// highlightSecurityThreats adds highlighting to content where security threats are detected
+func (m Model) highlightSecurityThreats(content string) string {
+	if len(m.securityThreats) == 0 {
+		return content // No threats to highlight
+	}
 
-	var content strings.Builder
+	// Get the highest threat for highlighting
+	threat := security.GetHighestThreat(m.securityThreats)
+	if threat == nil {
+		return content
+	}
 
-	// Clear screen
-	content.WriteString("\x1b[2J\x1b[H")
+	// Define highlighting colors
+	warningStyle := "\x1b[91m\x1b[1m" // Bold red
+	resetStyle := "\x1b[0m"
 
-	// Header
+	// Try to find and highlight specific patterns within the content
+	highlighted := m.findAndHighlightPatterns(content, threat.Type, warningStyle, resetStyle)
+	if highlighted != content {
+		return highlighted // Found and highlighted specific patterns
+	}
+
+	// Fallback: if content is short and looks like a single credential, highlight it all
+	trimmed := strings.TrimSpace(content)
+	if len(strings.Fields(trimmed)) <= 3 && len(trimmed) >= 8 && len(trimmed) <= 100 {
+		return warningStyle + content + resetStyle
+	}
+
+	return content
+}
+
+// findAndHighlightPatterns finds specific security patterns within content and highlights them
+func (m Model) findAndHighlightPatterns(content, threatType, warningStyle, resetStyle string) string {
+	switch threatType {
+	case "jwt":
+		// Find JWT tokens (3 base64 parts separated by dots)
+		re := regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+		return re.ReplaceAllStringFunc(content, func(match string) string {
+			return warningStyle + match + resetStyle
+		})
+
+	case "password":
+		// Look for password=value or password: value patterns first
+		re := regexp.MustCompile(`(?i)(password|passwd|pwd)\s*[:=]\s*([^\s\n]+)`)
+		if re.MatchString(content) {
+			return re.ReplaceAllStringFunc(content, func(match string) string {
+				parts := re.FindStringSubmatch(match)
+				if len(parts) >= 3 {
+					separator := ":"
+					if strings.Contains(match, "=") {
+						separator = "="
+					}
+					return parts[1] + separator + " " + warningStyle + parts[2] + resetStyle
+				}
+				return match
+			})
+		}
+		// Look for potential passwords (8+ chars with mixed character types)
+		words := strings.Fields(content)
+		for _, word := range words {
+			if m.looksLikePassword(word) {
+				content = strings.Replace(content, word, warningStyle+word+resetStyle, 1)
+				return content
+			}
+		}
+
+	case "api_key", "token":
+		// Look for API key patterns
+		patterns := []string{
+			`[A-Za-z0-9_-]{32,}`,     // Generic long alphanumeric strings
+			`[A-Za-z0-9+/]{40,}=*`,   // Base64-like strings
+			`sk_[a-zA-Z0-9_-]{24,}`,  // Stripe-like keys
+			`pk_[a-zA-Z0-9_-]{24,}`,  // Public keys
+		}
+		for _, pattern := range patterns {
+			re := regexp.MustCompile(pattern)
+			matches := re.FindAllString(content, -1)
+			for _, match := range matches {
+				if len(match) >= 20 { // Only highlight reasonably long tokens
+					content = strings.Replace(content, match, warningStyle+match+resetStyle, 1)
+					return content
+				}
+			}
+		}
+
+	case "ssh_key", "private_key":
+		// Highlight key blocks
+		patterns := []string{
+			`-----BEGIN [A-Z ]+-----[^-]+-----END [A-Z ]+-----`,
+			`ssh-(rsa|dss|ed25519|ecdsa) [A-Za-z0-9+/]+=*`,
+		}
+		for _, pattern := range patterns {
+			re := regexp.MustCompile(pattern)
+			return re.ReplaceAllStringFunc(content, func(match string) string {
+				return warningStyle + match + resetStyle
+			})
+		}
+
+	case "connection_string":
+		// Highlight password in connection strings
+		re := regexp.MustCompile(`://([^:]+):([^@]+)@`)
+		return re.ReplaceAllStringFunc(content, func(match string) string {
+			parts := re.FindStringSubmatch(match)
+			if len(parts) >= 3 {
+				return "://" + parts[1] + ":" + warningStyle + parts[2] + resetStyle + "@"
+			}
+			return match
+		})
+	}
+
+	return content
+}
+
+// looksLikePassword checks if a word has password-like characteristics
+func (m Model) looksLikePassword(word string) bool {
+	if len(word) < 8 || len(word) > 128 {
+		return false
+	}
+
+	hasUpper := false
+	hasLower := false
+	hasDigit := false
+	hasSpecial := false
+
+	for _, char := range word {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasDigit = true
+		case strings.ContainsRune("!@#$%^&*()_+-=[]{}|;:,.<>?", char):
+			hasSpecial = true
+		}
+	}
+
+	// Password-like if it has at least 3 of the 4 character types
+	score := 0
+	if hasUpper { score++ }
+	if hasLower { score++ }
+	if hasDigit { score++ }
+	if hasSpecial { score++ }
+
+	return score >= 3
+}
+
+// getSecurityViewLines returns the content lines for scrolling (like getTextViewLines)
+func (m Model) getSecurityViewLines() []string {
+	// This should ONLY return the content that scrolls, not static headers/footers
+	// Follow the exact pattern of getTextViewLines()
+	
+	content := m.securityContent
+	if content == "" {
+		return []string{"[No content available]"}
+	}
+
+	// Apply security highlighting if threats are detected
 	if len(m.securityThreats) > 0 {
-		warningIcon := m.iconHelper.GetMediumRiskIcon()
-		if warningIcon == "" {
-			warningIcon = "!"
-		}
-		content.WriteString(headerStyle.Render(warningIcon + "  SECURITY WARNING"))
-	} else {
-		// Use a simple magnifying glass alternative for scan mode
-		scanIcon := "?"
-		if m.iconHelper.GetCapabilities().SupportsUnicode {
-			scanIcon = "🔍"
-		}
-		content.WriteString(headerStyle.Render(scanIcon + " SECURITY SCAN"))
-	}
-	content.WriteString("\n\n")
-
-	// Show current threat level and safe entry status
-	if m.securityItem != nil {
-		infoStyle := createStyle(m.config.Theme.Status)
-		content.WriteString(infoStyle.Render(fmt.Sprintf("Current threat level: %s", strings.ToUpper(m.securityItem.ThreatLevel))))
-		content.WriteString("\n")
-		safeStatus := "UNSAFE"
-		if m.securityItem.SafeEntry {
-			safeStatus = "SAFE"
-		}
-		content.WriteString(infoStyle.Render(fmt.Sprintf("Currently marked as: %s", safeStatus)))
-		content.WriteString("\n\n")
+		content = m.highlightSecurityThreats(content)
 	}
 
-	// Warning message
+	// Split content into lines (same as text view)
+	lines := strings.Split(content, "\n")
+
+	// Calculate available width for wrapping (same as text view)
+	dialogWidth := m.width - 2      // 1 char padding left and right
+	contentWidth := dialogWidth - 4 // Border + internal padding
+	if contentWidth < 10 {
+		contentWidth = 10
+	}
+
+	// Wrap long lines (same logic as text view)
+	var wrappedLines []string
+	for _, line := range lines {
+		// Calculate visible length (excluding ANSI escape codes)
+		visibleLen := m.calculateVisibleLength(line)
+		
+		if visibleLen <= contentWidth {
+			wrappedLines = append(wrappedLines, line)
+		} else {
+			// Wrap long lines for regular text (same as text view)
+			wrappedLines = append(wrappedLines, m.wrapLongLine(line, contentWidth)...)
+		}
+	}
+
+	return wrappedLines
+}
+
+// renderSecurityWarning renders the security warning dialog using exact text view pattern
+func (m Model) renderSecurityWarning() string {
+	// Ensure minimum terminal size - same as text view
+	if m.width < 10 || m.height < 8 {
+		return "Terminal too small for security viewer"
+	}
+
+	if m.securityItem == nil {
+		return "No security item to view"
+	}
+
+	// Calculate dialog dimensions - same as text view
+	dialogWidth := m.width - 2   // 1 char padding left and right
+	dialogHeight := m.height - 2 // 1 char padding top and bottom
+
+	// Get content lines (ONLY the scrollable content) - same as text view
+	contentLines := m.getSecurityViewLines()
+
+	// Calculate content area within the dialog - same as text view
+	contentWidth := dialogWidth - 4   // Border + internal padding
+	contentHeight := dialogHeight - 4 // Border + header + footer
+
+	if contentWidth < 10 {
+		contentWidth = 10
+	}
+	if contentHeight < 5 {
+		contentHeight = 5
+	}
+
+	// Apply scroll limits - same as text view
+	maxScrollOffset := len(contentLines) - contentHeight
+	if maxScrollOffset < 0 {
+		maxScrollOffset = 0
+	}
+	if m.securityScrollOffset > maxScrollOffset {
+		m.securityScrollOffset = maxScrollOffset
+	}
+	if m.securityScrollOffset < 0 {
+		m.securityScrollOffset = 0
+	}
+
+	// Get visible lines - same as text view
+	visibleLines := make([]string, 0)
+	start := m.securityScrollOffset
+	end := start + contentHeight
+	if end > len(contentLines) {
+		end = len(contentLines)
+	}
+
+	for i := start; i < end; i++ {
+		line := contentLines[i]
+		// Use visible length calculation for proper truncation with ANSI codes
+		visibleLen := m.calculateVisibleLength(line)
+		if visibleLen > contentWidth {
+			line = m.truncateWithANSI(line, contentWidth-3) + "..."
+		}
+		// Pad line to content width to maintain consistent frame borders
+		line = m.padLineToWidth(line, contentWidth)
+		visibleLines = append(visibleLines, line)
+	}
+
+	// Create header with ALL security info - same pattern as text view
+	lineCount := len(strings.Split(m.securityContent, "\n"))
+	charCount := len(m.securityContent)
+	
+	// Build header with security status info (like text view puts security info in header)
+	var headerText string
 	if len(m.securityThreats) > 0 {
 		threat := security.GetHighestThreat(m.securityThreats)
 		if threat != nil {
-			content.WriteString(warningStyle.Render(fmt.Sprintf("Live scan detected: %s (%.0f%% confidence)",
-				strings.ToUpper(threat.Type), threat.Confidence*100)))
-			content.WriteString("\n")
-			content.WriteString(warningStyle.Render(fmt.Sprintf("Reason: %s", threat.Reason)))
-			content.WriteString("\n\n")
+			headerText = fmt.Sprintf("SECURITY WARNING - %s (%.0f%% confidence) - %s (%d lines, %d chars)",
+				strings.ToUpper(threat.Type), threat.Confidence*100,
+				strings.ToUpper(m.securityItem.ThreatLevel), lineCount, charCount)
 		}
 	} else {
-		statusStyle := createStyle(m.config.Theme.Status)
-		content.WriteString(statusStyle.Render("✅ Live scan: No security threats detected"))
-		content.WriteString("\n\n")
+		headerText = fmt.Sprintf("SECURITY SCAN - No threats detected (%d lines, %d chars)", lineCount, charCount)
 	}
 
-	// Content preview (first 200 chars)
-	preview := m.securityContent
-	if len(preview) > 200 {
-		preview = preview[:200] + "..."
-	}
-	// Replace newlines with spaces for better display
-	preview = strings.ReplaceAll(preview, "\n", " ")
-
-	content.WriteString("Content preview:\n")
-	content.WriteString(fmt.Sprintf("\"%s\"\n\n", preview))
-
-	// Security guidance
-	if len(m.securityThreats) > 0 {
-		content.WriteString("Live scan found potential security content.\n")
-		content.WriteString("Review the analysis and decide how to mark this entry.\n\n")
+	// Add safe status to header
+	if m.securityItem.SafeEntry {
+		headerText += " - MARKED SAFE"
 	} else {
-		content.WriteString("Live scan found no security threats.\n")
-		content.WriteString("You can still manually mark this entry as safe or unsafe.\n\n")
+		headerText += " - MARKED UNSAFE"
 	}
 
-	// Options
-	content.WriteString("Options:\n\n")
-	content.WriteString("• Press 's' to mark as SAFE\n")
-	content.WriteString("• Press 'u' to mark as UNSAFE\n")
-	content.WriteString("• Press 'y' to REMOVE this entry from clipboard history\n")
-	content.WriteString("• Press 'n' or Enter to close without changes\n")
-	content.WriteString("• Press 'q' to quit application\n\n")
-
-	// Footer
-	footerText := "s: mark safe • u: mark unsafe • y: remove • n/enter: close • q: quit"
-
-	// Calculate padding to push footer to bottom
-	currentLines := strings.Count(content.String(), "\n")
-	remainingLines := m.height - currentLines - 2
-
-	for i := 0; i < remainingLines && i >= 0; i++ {
-		content.WriteString("\n")
+	// Build content - same as text view
+	var textContent strings.Builder
+	for _, line := range visibleLines {
+		textContent.WriteString(line)
+		textContent.WriteString("\n")
 	}
 
-	content.WriteString(statusStyle.Render(footerText))
+	// Pad to fill content area - same as text view
+	currentLines := len(visibleLines)
+	for currentLines < contentHeight { // Fill completely to push footer to very bottom
+		textContent.WriteString("\n")
+		currentLines++
+	}
 
-	return content.String()
+	// Create footer text - same pattern as text view
+	scrollInfo := ""
+	if maxScrollOffset > 0 {
+		scrollInfo = fmt.Sprintf(" - %d-%d/%d", start+1, end, len(contentLines))
+	}
+
+	var footerText string
+	if m.securityDeletePending {
+		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+	} else {
+		baseFooter := "s: mark safe - u: mark unsafe - d: delete - up/down: scroll - any other key: close"
+		footerText = baseFooter + scrollInfo
+	}
+
+	// Build frame content using shared function - same as text view
+	frameContent := m.buildFrameContent(headerText, textContent.String(), footerText, contentWidth)
+
+	// Create framed dialog using shared function - same as text view
+	positioned := m.createFramedDialog(dialogWidth, dialogHeight, frameContent)
+
+	return positioned
+}
+
+// renderImageSecurityWarning renders a small warning when trying to scan images
+func (m Model) renderImageSecurityWarning() string {
+	// Get the main window content as background
+	backgroundContent := m.renderMainWindow()
+	
+	// Create a small centered warning dialog
+	warningWidth := 50
+	warningHeight := 7
+	
+	// Calculate center position
+	centerX := (m.width - warningWidth) / 2
+	centerY := (m.height - warningHeight) / 2
+	
+	if centerX < 0 { centerX = 0 }
+	if centerY < 0 { centerY = 0 }
+	
+	// Create warning content
+	warningStyle := m.createStyle(m.config.Theme.Warning)
+	statusStyle := m.createStyle(m.config.Theme.Status)
+	
+	warningContent := []string{
+		"Content Scanning Not Available",
+		"",
+		"Security scanning is only available for text",
+		"content. Images cannot be analyzed for",
+		"security threats.",
+		"",
+		"Press any key to continue",
+	}
+	
+	// Build the warning dialog
+	var result strings.Builder
+	result.WriteString(backgroundContent)
+	
+	// Draw the warning box
+	for y := 0; y < warningHeight; y++ {
+		// Position cursor
+		result.WriteString(fmt.Sprintf("\x1b[%d;%dH", centerY+y+1, centerX+1))
+		
+		if y == 0 {
+			// Top border
+			result.WriteString("╭" + strings.Repeat("─", warningWidth-2) + "╮")
+		} else if y == warningHeight-1 {
+			// Bottom border
+			result.WriteString("╰" + strings.Repeat("─", warningWidth-2) + "╯")
+		} else {
+			// Content lines
+			line := ""
+			if y-1 < len(warningContent) {
+				line = warningContent[y-1]
+			}
+			
+			// Apply styling to specific lines
+			if y == 1 { // Title line
+				line = warningStyle.Render(line)
+			} else if y == len(warningContent) { // "Press any key" line
+				line = statusStyle.Render(line)
+			}
+			
+			// Center the text and pad
+			padding := (warningWidth - 2 - m.calculateVisibleLength(line)) / 2
+			if padding < 0 { padding = 0 }
+			
+			contentLine := strings.Repeat(" ", padding) + line
+			// Pad to full width
+			for len(contentLine) < warningWidth-2 {
+				contentLine += " "
+			}
+			
+			result.WriteString("│" + contentLine + "│")
+		}
+	}
+	
+	return result.String()
 }
 
 // calculateOptimalStart determines the best starting item index to keep cursor visible
@@ -1519,6 +2226,11 @@ func (m Model) getSecurityIcon(item storage.ClipboardItem) string {
 		return ""
 	}
 
+	// Don't show security warnings if item has been marked as safe
+	if item.SafeEntry {
+		return ""
+	}
+
 	// Use stored threat level for display
 	switch item.ThreatLevel {
 	case "high":
@@ -1526,14 +2238,32 @@ func (m Model) getSecurityIcon(item storage.ClipboardItem) string {
 	case "medium":
 		return m.iconHelper.GetMediumRiskIcon()
 	case "low":
-		// Show low risk with a dimmer icon
-		if m.iconHelper.GetCapabilities().SupportsEmoji {
-			return "🔓" // Unlocked padlock for low risk
-		} else if m.iconHelper.GetCapabilities().SupportsUnicode {
-			return "◦" // Small circle for low risk
-		} else {
-			return "[L]" // [L] for low risk
-		}
+		// Show low risk with a simple icon
+		return "[?]" // Simple low risk indicator
+	default: // "none"
+		return ""
+	}
+}
+
+// getPlainSecurityIcon returns plain security icon without ANSI colors for display line generation
+func (m Model) getPlainSecurityIcon(item storage.ClipboardItem) string {
+	if item.ContentType == "image" {
+		return ""
+	}
+
+	// Don't show security warnings if item has been marked as safe
+	if item.SafeEntry {
+		return ""
+	}
+
+	// Use stored threat level for display - return plain icons without colors
+	switch item.ThreatLevel {
+	case "high":
+		return "[!]"
+	case "medium":
+		return "[?]"
+	case "low":
+		return "[?]"
 	default: // "none"
 		return ""
 	}
@@ -1612,9 +2342,9 @@ func (m Model) renderHelp() string {
 	// Create footer text
 	scrollInfo := ""
 	if maxScrollOffset > 0 {
-		scrollInfo = fmt.Sprintf(" • %d-%d/%d", start+1, end, len(helpLines))
+		scrollInfo = fmt.Sprintf(" - %d-%d/%d", start+1, end, len(helpLines))
 	}
-	footerText := "h/esc/q: close • ↑/↓: scroll" + scrollInfo
+	footerText := "h/esc/q: close - up/down: scroll" + scrollInfo
 
 	// Build frame content using shared function
 	frameContent := m.buildFrameContent(headerText, helpContent.String(), footerText, contentWidth)
@@ -1625,14 +2355,31 @@ func (m Model) renderHelp() string {
 	return positioned
 }
 
-// getTextViewLines splits the text content into lines for viewing
+// getTextViewLines splits the text content into lines for viewing with syntax highlighting
 func (m Model) getTextViewLines() []string {
 	if m.viewingText == nil {
 		return []string{}
 	}
 
-	// Split content into lines, preserving empty lines
-	lines := strings.Split(m.viewingText.Content, "\n")
+	content := m.viewingText.Content
+
+	// Detect if this is source code and apply syntax highlighting
+	language, isCode := m.codeDetector.DetectLanguage(content)
+	
+	var lines []string
+	if isCode {
+		// Apply syntax highlighting
+		highlightedLines, err := m.codeDetector.HighlightCode(content, language, m.useBasicColors)
+		if err == nil {
+			lines = highlightedLines
+		} else {
+			// Fallback to original content if highlighting fails
+			lines = strings.Split(content, "\n")
+		}
+	} else {
+		// Use original content for non-code text
+		lines = strings.Split(content, "\n")
+	}
 
 	// Calculate available width for wrapping
 	dialogWidth := m.width - 2      // 1 char padding left and right
@@ -1641,35 +2388,122 @@ func (m Model) getTextViewLines() []string {
 		contentWidth = 10
 	}
 
-	// Wrap long lines
+	// Wrap long lines (considering ANSI codes for highlighted text)
 	var wrappedLines []string
 	for _, line := range lines {
-		if len(line) <= contentWidth {
+		// Calculate visible length (excluding ANSI escape codes)
+		visibleLen := m.calculateVisibleLength(line)
+		
+		if visibleLen <= contentWidth {
 			wrappedLines = append(wrappedLines, line)
 		} else {
-			// Wrap long lines
-			for len(line) > 0 {
-				if len(line) <= contentWidth {
-					wrappedLines = append(wrappedLines, line)
-					break
-				}
-
-				// Find best break point
-				breakPoint := contentWidth
-				for i := contentWidth - 1; i >= contentWidth/2 && i < len(line); i-- {
-					if line[i] == ' ' {
-						breakPoint = i
-						break
-					}
-				}
-
-				wrappedLines = append(wrappedLines, line[:breakPoint])
-				line = strings.TrimLeft(line[breakPoint:], " ")
+			// For syntax-highlighted code, prefer not to wrap to preserve formatting
+			// Instead, truncate with indication
+			if isCode {
+				truncated := m.truncateWithANSI(line, contentWidth-3) + "..."
+				wrappedLines = append(wrappedLines, truncated)
+			} else {
+				// Wrap long lines for regular text
+				wrappedLines = append(wrappedLines, m.wrapLongLine(line, contentWidth)...)
 			}
 		}
 	}
 
 	return wrappedLines
+}
+
+// calculateVisibleLength calculates the visible length of a string excluding ANSI escape codes
+func (m Model) calculateVisibleLength(s string) int {
+	// Simple ANSI escape sequence removal for length calculation
+	// This regex matches basic ANSI escape sequences
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	clean := ansiRegex.ReplaceAllString(s, "")
+	return len(clean)
+}
+
+// truncateWithANSI truncates a string with ANSI codes while preserving color formatting
+func (m Model) truncateWithANSI(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	
+	visibleLen := m.calculateVisibleLength(s)
+	if visibleLen <= maxLen {
+		return s
+	}
+	
+	// Parse the string character by character, tracking ANSI sequences
+	var result strings.Builder
+	var visibleCount int
+	inEscape := false
+	
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		
+		// Start of ANSI escape sequence
+		if r == '\x1b' && i+1 < len(runes) && runes[i+1] == '[' {
+			inEscape = true
+		}
+		
+		// Always include escape sequences (they don't count toward visible length)
+		if inEscape {
+			result.WriteRune(r)
+			// End of escape sequence
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		
+		// Regular character - check if we have room
+		if visibleCount >= maxLen {
+			break
+		}
+		
+		result.WriteRune(r)
+		visibleCount++
+	}
+	
+	return result.String()
+}
+
+// wrapLongLine wraps a long line at word boundaries
+func (m Model) wrapLongLine(line string, contentWidth int) []string {
+	var wrapped []string
+	
+	for len(line) > 0 {
+		if len(line) <= contentWidth {
+			wrapped = append(wrapped, line)
+			break
+		}
+
+		// Find best break point
+		breakPoint := contentWidth
+		for i := contentWidth - 1; i >= contentWidth/2 && i < len(line); i-- {
+			if line[i] == ' ' {
+				breakPoint = i
+				break
+			}
+		}
+
+		wrapped = append(wrapped, line[:breakPoint])
+		line = strings.TrimLeft(line[breakPoint:], " ")
+	}
+	
+	return wrapped
+}
+
+// padLineToWidth pads a line with spaces to ensure consistent frame width
+func (m Model) padLineToWidth(line string, targetWidth int) string {
+	visibleLen := m.calculateVisibleLength(line)
+	if visibleLen >= targetWidth {
+		return line
+	}
+	
+	// Add spaces to reach target width
+	padding := targetWidth - visibleLen
+	return line + strings.Repeat(" ", padding)
 }
 
 // renderTextView renders the text viewer dialog
@@ -1723,16 +2557,46 @@ func (m Model) renderTextView() string {
 
 	for i := start; i < end; i++ {
 		line := textLines[i]
-		if len(line) > contentWidth {
-			line = line[:contentWidth-3] + "..."
+		// Use visible length calculation for proper truncation with ANSI codes
+		visibleLen := m.calculateVisibleLength(line)
+		if visibleLen > contentWidth {
+			line = m.truncateWithANSI(line, contentWidth-3) + "..."
 		}
+		// Pad line to content width to maintain consistent frame borders
+		line = m.padLineToWidth(line, contentWidth)
 		visibleLines = append(visibleLines, line)
 	}
 
-	// Create title with length info
+	// Create title with security marking, length info and syntax highlighting status
 	lineCount := len(strings.Split(m.viewingText.Content, "\n"))
 	charCount := len(m.viewingText.Content)
-	headerText := fmt.Sprintf("Text View (%d lines, %d chars)", lineCount, charCount)
+	
+	// Get security icon and information
+	securityIcon := m.getSecurityIcon(*m.viewingText)
+	securityPrefix := ""
+	if securityIcon != "" {
+		securityPrefix = securityIcon + " "
+	}
+	
+	// Check if syntax highlighting was applied
+	language, isCode := m.codeDetector.DetectLanguage(m.viewingText.Content)
+	var headerText string
+	if isCode {
+		headerText = fmt.Sprintf("%sText View - %s (%d lines, %d chars)", securityPrefix, strings.ToUpper(language), lineCount, charCount)
+	} else {
+		headerText = fmt.Sprintf("%sText View (%d lines, %d chars)", securityPrefix, lineCount, charCount)
+	}
+	
+	// Add security information to the header if item has security warnings
+	if m.viewingText.ThreatLevel == "high" || m.viewingText.ThreatLevel == "medium" {
+		var threatDesc string
+		if m.viewingText.ThreatLevel == "high" {
+			threatDesc = "HIGH RISK - Contains potentially dangerous content"
+		} else {
+			threatDesc = "MEDIUM RISK - Contains potentially sensitive content"
+		}
+		headerText += " - " + threatDesc
+	}
 
 	// Build text content
 	var textContent strings.Builder
@@ -1751,14 +2615,19 @@ func (m Model) renderTextView() string {
 	// Create footer text
 	scrollInfo := ""
 	if maxScrollOffset > 0 {
-		scrollInfo = fmt.Sprintf(" • %d-%d/%d", start+1, end, len(textLines))
+		scrollInfo = fmt.Sprintf(" - %d-%d/%d", start+1, end, len(textLines))
 	}
-	// Create footer text based on delete confirmation state
+	// Create footer text based on delete confirmation state and security warnings
 	var footerText string
 	if m.textDeletePending {
 		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
 	} else {
-		footerText = "v/esc/q: close • ↑/↓: scroll • enter: copy • e: edit • d: delete" + scrollInfo
+		baseFooter := "v/esc/q: close - up/down: scroll - enter: copy - e: edit - d: delete"
+		// Add security actions if this item has security warnings
+		if m.viewingText.ThreatLevel == "high" || m.viewingText.ThreatLevel == "medium" {
+			baseFooter += " - s: mark as safe"
+		}
+		footerText = baseFooter + scrollInfo
 	}
 
 	// Build frame content using shared function
@@ -1825,15 +2694,15 @@ type textViewEditCompleteMsg struct {
 
 // generateHelpContent creates the help text lines
 func (m Model) generateHelpContent() []string {
-	searchStyle := createStyle(m.config.Theme.Search)
-	warningStyle := createStyle(m.config.Theme.Warning)
+	searchStyle := m.createStyle(m.config.Theme.Search)
+	warningStyle := m.createStyle(m.config.Theme.Warning)
 
 	var lines []string
 
 	// Basic Navigation
 	lines = append(lines, searchStyle.Render("BASIC NAVIGATION"))
 	lines = append(lines, "")
-	lines = append(lines, "  j/k or ↑/↓   Navigate up/down through clipboard items")
+	lines = append(lines, "  j/k or up/down   Navigate up/down through clipboard items")
 	lines = append(lines, "  Enter        Copy selected item to clipboard and exit")
 	lines = append(lines, "  q / Ctrl+C   Quit the application")
 	lines = append(lines, "  h            Show this help screen")
@@ -1842,8 +2711,14 @@ func (m Model) generateHelpContent() []string {
 	// Search and Filtering
 	lines = append(lines, searchStyle.Render("SEARCH & FILTERING"))
 	lines = append(lines, "")
-	lines = append(lines, "  /            Enter search mode for fuzzy filtering")
-	lines = append(lines, "  c            Clear current search filter")
+	lines = append(lines, "  Basic Filtering:")
+	lines = append(lines, "    /            Enter search mode for fuzzy filtering")
+	lines = append(lines, "    c            Clear current search filter")
+	lines = append(lines, "")
+	lines = append(lines, "  Content Filters:")
+	lines = append(lines, "    i            Show only images")
+	lines = append(lines, "    !            Show only high-risk security items")
+	lines = append(lines, "    ?            Show only medium-risk security items")
 	lines = append(lines, "")
 	lines = append(lines, "  In search mode:")
 	lines = append(lines, "    Type         Filter items in real-time")
@@ -1855,69 +2730,44 @@ func (m Model) generateHelpContent() []string {
 	// Content Operations
 	lines = append(lines, searchStyle.Render("CONTENT OPERATIONS"))
 	lines = append(lines, "")
-	lines = append(lines, "  v            View text/image in full-screen viewer")
-	lines = append(lines, "  e            Edit selected item in external editor")
-	lines = append(lines, "  d            Delete item (press 'd' again to confirm)")
+	lines = append(lines, "  Basic content operations:")
+	lines = append(lines, "    v            View text/image in full-screen viewer")
+	lines = append(lines, "    e            Edit selected item in external editor")
+	lines = append(lines, "    d            Delete item (press 'd' again to confirm)")
 	lines = append(lines, "")
 	lines = append(lines, "  In text view mode:")
-	lines = append(lines, "    v/esc/q      Exit text viewer and return to list")
-	lines = append(lines, "    ↑/↓          Scroll through text content")
+	lines = append(lines, "    up/down      Scroll through text content")
 	lines = append(lines, "    Enter        Copy text to clipboard and exit")
 	lines = append(lines, "    e            Edit text (returns to viewer after editing)")
 	lines = append(lines, "    d            Delete text from database")
+	lines = append(lines, "    s            Mark security-flagged item as safe")
+	lines = append(lines, "    any other key Exit text viewer and return to list")
 	lines = append(lines, "")
 	lines = append(lines, "  In image view mode:")
 	lines = append(lines, "    Enter        Copy image to clipboard and exit")
 	lines = append(lines, "    o            Open image in external viewer")
 	lines = append(lines, "    e            Edit image in external editor")
 	lines = append(lines, "    d            Delete image from database")
-	lines = append(lines, "    v/esc/q      Exit image viewer and return to list")
+	lines = append(lines, "    any other key Exit image viewer and return to list")
 	lines = append(lines, "")
 
 	// Security Features
 	lines = append(lines, warningStyle.Render("SECURITY FEATURES"))
 	lines = append(lines, "")
-	lines = append(lines, "  Ctrl+S       Analyze current item for security threats")
+	lines = append(lines, "  Initialize content scanning:")
+	lines = append(lines, "    ctrl+s       Analyze current item for security threats")
 	lines = append(lines, "")
 	lines = append(lines, "  Security indicators automatically detect:")
-	lines = append(lines, "    • JWT tokens, API keys, SSH keys")
-	lines = append(lines, "    • Database connection strings")
-	lines = append(lines, "    • Password-like patterns")
-	lines = append(lines, "    • Credit card numbers")
+	lines = append(lines, "    - JWT tokens, API keys, SSH keys")
+	lines = append(lines, "    - Database connection strings")
+	lines = append(lines, "    - Password-like patterns")
+	lines = append(lines, "    - Credit card numbers")
 	lines = append(lines, "")
-
-	// Security Icons
-	caps := m.iconHelper.GetCapabilities()
 	lines = append(lines, "  Security visual indicators:")
-	if caps.SupportsEmoji {
-		lines = append(lines, "    🔒           High-risk security content")
-		lines = append(lines, "    ⚠️           Medium-risk security content")
-	} else if caps.SupportsUnicode {
-		lines = append(lines, "    ⚡           High-risk security content")
-		lines = append(lines, "    ⚪           Medium-risk security content")
-	} else if caps.SupportsColor {
-		lines = append(lines, "    ! (red)      High-risk security content")
-		lines = append(lines, "    ? (yellow)   Medium-risk security content")
-	} else {
-		lines = append(lines, "    [H]          High-risk security content")
-		lines = append(lines, "    [M]          Medium-risk security content")
-	}
+	lines = append(lines, "    [!]          High-risk security content")
+	lines = append(lines, "    [?]          Medium-risk security content")
 	lines = append(lines, "")
 
-	// Security Workflow
-	lines = append(lines, "  Security workflow:")
-	lines = append(lines, "    1. Daemon detects security content automatically")
-	lines = append(lines, "    2. Content is stored with visual indicators")
-	lines = append(lines, "    3. Press Ctrl+S to view detailed analysis")
-	lines = append(lines, "    4. Choose to remove suspicious content")
-	lines = append(lines, "    5. Removed content is blocked from future collection")
-	lines = append(lines, "")
-
-	// Mouse Support
-	lines = append(lines, searchStyle.Render("MOUSE SUPPORT"))
-	lines = append(lines, "")
-	lines = append(lines, "  Click        Select and copy item directly")
-	lines = append(lines, "")
 
 	// Configuration
 	lines = append(lines, searchStyle.Render("CONFIGURATION"))
@@ -1946,7 +2796,6 @@ func (m Model) generateHelpContent() []string {
 	lines = append(lines, searchStyle.Render("TERMINAL COMPATIBILITY"))
 	lines = append(lines, "")
 	lines = append(lines, "  Image display: Only supported in terminals with Kitty graphics protocol")
-	lines = append(lines, "  Security icons: Only displayed in Unicode-capable terminals")
 	lines = append(lines, "")
 
 	return lines
