@@ -59,8 +59,9 @@ const (
 type Model struct {
 	storage         *storage.Storage
 	config          *config.Config
-	items           []storage.ClipboardItem
-	filteredItems   []storage.ClipboardItem
+	cache           *storage.ItemCache     // Memory-efficient cache
+	items           []storage.ClipboardItemMeta // Lightweight metadata only
+	filteredItems   []storage.ClipboardItemMeta // Filtered lightweight metadata
 	cursor          int
 	searchQuery     string
 	currentMode     mode
@@ -163,15 +164,18 @@ func detectTerminalCapabilities() bool {
 }
 
 func NewModel(s *storage.Storage, cfg *config.Config) Model {
-	items := s.GetAll()
+	// Create memory-efficient cache (cache up to 20 images by default)
+	cache := storage.NewItemCache(s, 20)
+	items := cache.GetAllMeta()
 	hashStore, _ := security.NewHashStore() // Initialize security hash store
 	iconHelper := NewSecurityIconHelper()   // Initialize terminal detection
 	useBasicColors := !detectTerminalCapabilities()
 	codeDetector := NewCodeDetector() // Initialize syntax highlighting
 
-	return Model{
+	model := Model{
 		storage:        s,
 		config:         cfg,
+		cache:          cache,
 		items:          items,
 		filteredItems:  items,
 		cursor:         0,
@@ -181,10 +185,103 @@ func NewModel(s *storage.Storage, cfg *config.Config) Model {
 		useBasicColors: useBasicColors,
 		codeDetector:   codeDetector,
 	}
+	
+	// Initial preload of images around cursor
+	go model.preloadImagesAroundCursor()
+	
+	return model
 }
 
 func (m Model) Init() tea.Cmd {
 	return nil
+}
+
+// getItemByIndex returns a full ClipboardItem for the given filtered index
+func (m *Model) getItemByIndex(index int) *storage.ClipboardItem {
+	if index < 0 || index >= len(m.filteredItems) {
+		return nil
+	}
+	meta := m.filteredItems[index]
+	return m.cache.GetFullItem(meta.ID)
+}
+
+// getCurrentItem returns the currently selected full ClipboardItem
+func (m *Model) getCurrentItem() *storage.ClipboardItem {
+	return m.getItemByIndex(m.cursor)
+}
+
+// refreshItems reloads the items list and applies current filters
+func (m *Model) refreshItems() {
+	m.items = m.cache.GetAllMeta()
+	m.filterItems()
+}
+
+// applyFilters is an alias for filterItems to maintain compatibility
+func (m *Model) applyFilters() {
+	m.filterItems()
+}
+
+// getItemMeta returns metadata for the given filtered index  
+func (m *Model) getItemMeta(index int) *storage.ClipboardItemMeta {
+	if index < 0 || index >= len(m.filteredItems) {
+		return nil
+	}
+	return &m.filteredItems[index]
+}
+
+// preloadImagesAroundCursor preloads image data for items around the current cursor
+func (m *Model) preloadImagesAroundCursor() {
+	const bufferSize = 10 // Preload ±10 items around cursor
+	
+	var imageIDs []string
+	start := m.cursor - bufferSize
+	end := m.cursor + bufferSize
+	
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(m.filteredItems) {
+		end = len(m.filteredItems) - 1
+	}
+	
+	// Collect image IDs in the buffer range
+	for i := start; i <= end; i++ {
+		if i < len(m.filteredItems) {
+			item := &m.filteredItems[i]
+			if item.ContentType == "image" {
+				imageIDs = append(imageIDs, item.ID)
+			}
+		}
+	}
+	
+	// Preload the images (this will cache them)
+	if len(imageIDs) > 0 {
+		m.cache.PreloadImageData(imageIDs)
+	}
+}
+
+// evictImagesOutsideBuffer removes cached images that are far from cursor
+func (m *Model) evictImagesOutsideBuffer() {
+	const bufferSize = 10 // Keep ±10 items around cursor
+	const evictionDistance = bufferSize * 2 // Evict items more than 20 positions away
+	
+	// Find items to evict (those far from cursor)
+	for i, item := range m.filteredItems {
+		if item.ContentType == "image" {
+			distance := abs(i - m.cursor)
+			if distance > evictionDistance {
+				m.cache.EvictImageData(item.ID)
+			}
+		}
+	}
+}
+
+// abs returns absolute value of an integer
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // parseColor converts various color formats to lipgloss.Color with basic terminal fallback
@@ -393,7 +490,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		oldCursor := m.cursor
 		editedID := msg.editedItemID
 
-		m.items = m.storage.GetAll()
+		m.items = m.cache.GetAllMeta()
 		m.filterItems()
 
 		// Try to find the edited item and position cursor on it
@@ -484,8 +581,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.securityItem != nil {
 					m.storage.UpdateSafeEntry(m.securityItem.ID, true)
 					// Refresh items list
-					m.items = m.storage.GetAll()
-					m.filterItems()
+					m.refreshItems()
 					// Update the security item with new status
 					updatedItem := m.storage.GetByID(m.securityItem.ID)
 					if updatedItem != nil {
@@ -505,8 +601,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.securityItem != nil {
 					m.storage.UpdateSafeEntry(m.securityItem.ID, false)
 					// Refresh items list
-					m.items = m.storage.GetAll()
-					m.filterItems()
+					m.refreshItems()
 					// Update the security item with new status
 					updatedItem := m.storage.GetByID(m.securityItem.ID)
 					if updatedItem != nil {
@@ -538,8 +633,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 
 					// Refresh items list
-					m.items = m.storage.GetAll()
-					m.filterItems()
+					m.refreshItems()
 					if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
 						m.cursor = len(m.filteredItems) - 1
 					} else if len(m.filteredItems) == 0 {
@@ -706,8 +800,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Second press - confirm deletion
 						err := m.storage.Delete(m.viewingText.ID)
 						if err == nil {
-							m.items = m.storage.GetAll()
-							m.filterItems()
+							m.refreshItems()
 							// Adjust cursor if needed
 							if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
 								m.cursor = len(m.filteredItems) - 1
@@ -738,8 +831,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.viewingText.ThreatLevel = "none" // Clear threat level when marked as safe
 						
 						// Update the main items list
-						m.items = m.storage.GetAll()
-						m.filterItems()
+						m.refreshItems()
 					}
 				}
 				return m, nil
@@ -800,8 +892,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Second press - confirm deletion
 						err := m.storage.Delete(m.viewingImage.ID)
 						if err == nil {
-							m.items = m.storage.GetAll()
-							m.filterItems()
+							m.refreshItems()
 							// Adjust cursor if needed
 							if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
 								m.cursor = len(m.filteredItems) - 1
@@ -850,8 +941,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.deleteCandidate != nil {
 					err := m.storage.Delete(m.deleteCandidate.ID)
 					if err == nil {
-						m.items = m.storage.GetAll()
-						m.filterItems()
+						m.refreshItems()
 						// Adjust cursor if needed
 						if m.cursor >= len(m.filteredItems) && len(m.filteredItems) > 0 {
 							m.cursor = len(m.filteredItems) - 1
@@ -921,7 +1011,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "enter":
 				if len(m.filteredItems) > 0 && m.cursor < len(m.filteredItems) {
-					selectedItem := m.filteredItems[m.cursor]
+					selectedItem := m.getCurrentItem()
+					if selectedItem == nil {
+						return m, nil
+					}
 					err := clipboard.Copy(selectedItem.Content)
 					if err != nil {
 						return m, nil
@@ -932,13 +1025,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "v":
 				// View entry in full-screen (images or text)
 				if len(m.filteredItems) > 0 && m.cursor < len(m.filteredItems) {
-					selectedItem := m.filteredItems[m.cursor]
+					selectedItem := m.getCurrentItem()
+					if selectedItem == nil {
+						return m, nil
+					}
 					if selectedItem.ContentType == "image" {
-						m.viewingImage = &selectedItem
+						m.viewingImage = selectedItem
 						m.currentMode = modeImageView
 						return m, nil
 					} else {
-						m.viewingText = &selectedItem
+						m.viewingText = selectedItem
 						m.textScrollOffset = 0
 						m.currentMode = modeTextView
 						return m, nil
@@ -947,18 +1043,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "e":
 				if len(m.filteredItems) > 0 && m.cursor < len(m.filteredItems) {
-					selectedItem := m.filteredItems[m.cursor]
+					selectedItem := m.getCurrentItem()
+					if selectedItem == nil {
+						return m, nil
+					}
 					if selectedItem.ContentType == "image" {
-						return m, m.editImage(selectedItem)
+						return m, m.editImage(*selectedItem)
 					} else {
-						return m, m.editEntry(selectedItem)
+						return m, m.editEntry(*selectedItem)
 					}
 				}
 
 			case "d":
 				if len(m.filteredItems) > 0 && m.cursor < len(m.filteredItems) {
-					selectedItem := m.filteredItems[m.cursor]
-					m.deleteCandidate = &selectedItem
+					selectedItem := m.getCurrentItem()
+					if selectedItem == nil {
+						return m, nil
+					}
+					m.deleteCandidate = selectedItem
 					m.currentMode = modeConfirmDelete
 					return m, nil
 				}
@@ -966,11 +1068,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "up", "k":
 				if m.cursor > 0 {
 					m.cursor--
+					// Preload images around new cursor position
+					go m.preloadImagesAroundCursor()
 				}
 
 			case "down", "j":
 				if m.cursor < len(m.filteredItems)-1 {
 					m.cursor++
+					// Preload images around new cursor position
+					go m.preloadImagesAroundCursor()
 				}
 
 			case "pgup":
@@ -995,6 +1101,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						newCursor = 0
 					}
 					m.cursor = newCursor
+					// Preload images around new cursor position
+					go m.preloadImagesAroundCursor()
 				}
 
 			case "pgdown":
@@ -1019,17 +1127,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						newCursor = len(m.filteredItems) - 1
 					}
 					m.cursor = newCursor
+					// Preload images around new cursor position
+					go m.preloadImagesAroundCursor()
 				}
 
 			case "ctrl+s":
 				// Scan current item for security issues
 				if len(m.filteredItems) > 0 && m.cursor < len(m.filteredItems) {
-					selectedItem := m.filteredItems[m.cursor]
+					selectedItem := m.getCurrentItem()
+					if selectedItem == nil {
+						return m, nil
+					}
 					if selectedItem.ContentType != "image" {
 						detector := security.NewSecurityDetector()
 						threats := detector.DetectSecurity(selectedItem.Content)
 						// Always show security dialog, even if no threats found
-						m.ShowSecurityWarning(selectedItem, threats)
+						m.ShowSecurityWarning(*selectedItem, threats)
 						return m, nil
 					} else {
 						// Show warning that security scanning is not available for images
@@ -1107,8 +1220,8 @@ func (m *Model) filterItems() {
 }
 
 // applyContentFilter filters items based on content type or security status
-func (m *Model) applyContentFilter(items []storage.ClipboardItem) []storage.ClipboardItem {
-	var filtered []storage.ClipboardItem
+func (m *Model) applyContentFilter(items []storage.ClipboardItemMeta) []storage.ClipboardItemMeta {
+	var filtered []storage.ClipboardItemMeta
 	
 	switch m.filterMode {
 	case "images":
@@ -1140,9 +1253,9 @@ func (m *Model) applyContentFilter(items []storage.ClipboardItem) []storage.Clip
 }
 
 // applySearchFilter applies fuzzy search filtering to items
-func (m *Model) applySearchFilter(items []storage.ClipboardItem) []storage.ClipboardItem {
+func (m *Model) applySearchFilter(items []storage.ClipboardItemMeta) []storage.ClipboardItemMeta {
 	// When searching, only include text items (images can't be searched)
-	var textItems []storage.ClipboardItem
+	var textItems []storage.ClipboardItemMeta
 	var searchTargets []string
 
 	for _, item := range items {
@@ -1155,7 +1268,7 @@ func (m *Model) applySearchFilter(items []storage.ClipboardItem) []storage.Clipb
 	matches := fuzzy.Find(m.searchQuery, searchTargets)
 
 	// Filter out weak matches by checking if the search term actually appears in the content
-	var filteredMatches []storage.ClipboardItem
+	var filteredMatches []storage.ClipboardItemMeta
 	lowerQuery := strings.ToLower(m.searchQuery)
 
 	for _, match := range matches {
@@ -2077,7 +2190,8 @@ func (m Model) calculateLinesUpToCursor() int {
 	}
 
 	for i := 0; i <= m.cursor && i < len(m.filteredItems); i++ {
-		item := m.filteredItems[i]
+		itemMeta := m.filteredItems[i]
+		item := itemMeta.ToClipboardItem()
 		itemLines := m.calculateItemLines(item, availableWidth)
 		totalLines += itemLines
 
@@ -2099,7 +2213,8 @@ func (m Model) canFitCursorFromStart(start int, contentHeight int) bool {
 	}
 
 	for i := start; i < len(m.filteredItems) && linesUsed < contentHeight; i++ {
-		item := m.filteredItems[i]
+		itemMeta := m.filteredItems[i]
+		item := itemMeta.ToClipboardItem()
 		itemLines := m.calculateItemLines(item, availableWidth)
 
 		// Check if this item would fit
@@ -2642,7 +2757,7 @@ func (m *Model) editTextViewEntry(item storage.ClipboardItem) tea.Cmd {
 			m.viewingText = &updatedItem
 
 			// Refresh main items list
-			m.items = m.storage.GetAll()
+			m.items = m.cache.GetAllMeta()
 			m.filterItems()
 		}
 

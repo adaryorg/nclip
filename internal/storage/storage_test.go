@@ -810,3 +810,154 @@ func TestDeduplicateExistingNoDuplicates(t *testing.T) {
 		t.Errorf("Expected 3 items after deduplication, got %d", len(items))
 	}
 }
+
+func TestWhitespaceDeduplication(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Manually insert entries with whitespace differences
+	id1 := fmt.Sprintf("%d", time.Now().UnixNano())
+	id2 := fmt.Sprintf("%d", time.Now().UnixNano()+1)
+	id3 := fmt.Sprintf("%d", time.Now().UnixNano()+2)
+
+	baseTime := time.Now()
+
+	// Insert same content with different whitespace
+	err := storage.insertDirectly(id1, "test content", "text", nil, baseTime.Add(1*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	err = storage.insertDirectly(id2, "  test content  ", "text", nil, baseTime.Add(2*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	err = storage.insertDirectly(id3, "\ttest content\n", "text", nil, baseTime.Add(3*time.Second), "none", true)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	// Verify we have 3 items initially
+	items := storage.GetAll()
+	if len(items) != 3 {
+		t.Fatalf("Expected 3 items before deduplication, got %d", len(items))
+	}
+
+	// Run deduplication
+	removedCount, err := storage.DeduplicateExisting()
+	if err != nil {
+		t.Fatalf("Failed to deduplicate: %v", err)
+	}
+
+	if removedCount != 2 {
+		t.Errorf("Expected to remove 2 whitespace duplicates, removed %d", removedCount)
+	}
+
+	// Verify we now have 1 item
+	items = storage.GetAll()
+	if len(items) != 1 {
+		t.Errorf("Expected 1 item after whitespace deduplication, got %d", len(items))
+	}
+
+	// Verify the most recent entry was kept
+	if items[0].ID != id3 {
+		t.Errorf("Expected to keep the most recent entry (ID: %s), but found ID: %s", id3, items[0].ID)
+	}
+}
+
+func TestNormalizeContentForDeduplication(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"test", "test"},
+		{"  test  ", "test"},
+		{"\ttest\n", "test"},
+		{" \n test \t ", "test"},
+		{"", ""},
+		{"   ", ""},
+		{"test\nwith\nnewlines", "test\nwith\nnewlines"},
+		{"  test\nwith\nnewlines  ", "test\nwith\nnewlines"},
+	}
+
+	for _, test := range tests {
+		result := normalizeContentForDeduplication(test.input)
+		if result != test.expected {
+			t.Errorf("normalizeContentForDeduplication(%q) = %q, expected %q", test.input, result, test.expected)
+		}
+	}
+}
+
+func TestGetAllMeta(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	// Add some test data
+	err := storage.Add("text content 1")
+	if err != nil {
+		t.Fatalf("Failed to add content: %v", err)
+	}
+
+	imageData := []byte("fake image data")
+	err = storage.AddImage(imageData, "test image")
+	if err != nil {
+		t.Fatalf("Failed to add image: %v", err)
+	}
+
+	// Get metadata
+	items := storage.GetAllMeta()
+	if len(items) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(items))
+	}
+
+	// Verify first item (most recent - image)
+	item := items[0]
+	if item.Content != "test image" {
+		t.Errorf("Expected content 'test image', got '%s'", item.Content)
+	}
+	if item.ContentType != "image" {
+		t.Errorf("Expected content type 'image', got '%s'", item.ContentType)
+	}
+
+	// Verify second item (text)
+	item = items[1]
+	if item.Content != "text content 1" {
+		t.Errorf("Expected content 'text content 1', got '%s'", item.Content)
+	}
+	if item.ContentType != "text" {
+		t.Errorf("Expected content type 'text', got '%s'", item.ContentType)
+	}
+}
+
+func TestGetImageData(t *testing.T) {
+	storage, _ := createTestStorage(t)
+
+	imageData := []byte("test image data")
+	err := storage.AddImage(imageData, "test image")
+	if err != nil {
+		t.Fatalf("Failed to add image: %v", err)
+	}
+
+	// Get the item to find its ID
+	items := storage.GetAllMeta()
+	if len(items) == 0 {
+		t.Fatal("No items found")
+	}
+
+	imageID := items[0].ID
+
+	// Test GetImageData
+	retrievedData := storage.GetImageData(imageID)
+	if retrievedData == nil {
+		t.Fatal("Expected image data, got nil")
+	}
+
+	if string(retrievedData) != "test image data" {
+		t.Errorf("Expected 'test image data', got '%s'", string(retrievedData))
+	}
+
+	// Test with non-existent ID
+	nonExistentData := storage.GetImageData("non-existent-id")
+	if nonExistentData != nil {
+		t.Error("Expected nil for non-existent ID")
+	}
+}

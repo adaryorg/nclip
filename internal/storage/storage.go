@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/adaryorg/nclip/internal/security"
@@ -44,6 +45,17 @@ type ClipboardItem struct {
 	Timestamp   time.Time `json:"timestamp"`
 	ThreatLevel string    `json:"threat_level"` // "none", "low", "medium", "high"
 	SafeEntry   bool      `json:"safe_entry"`   // User-marked safe flag
+}
+
+// ClipboardItemMeta is a lightweight version of ClipboardItem without image data
+// Used for memory-efficient listing when image data is not needed
+type ClipboardItemMeta struct {
+	ID          string    `json:"id"`
+	Content     string    `json:"content"`
+	ContentType string    `json:"content_type"`
+	Timestamp   time.Time `json:"timestamp"`
+	ThreatLevel string    `json:"threat_level"`
+	SafeEntry   bool      `json:"safe_entry"`
 }
 
 type Storage struct {
@@ -104,6 +116,12 @@ func (s *Storage) createTable() error {
 	return nil
 }
 
+// normalizeContentForDeduplication normalizes content for deduplication comparison
+// This helps identify duplicates that differ only in whitespace
+func normalizeContentForDeduplication(content string) string {
+	return strings.TrimSpace(content)
+}
+
 // calculateThreatLevel determines threat level based on security analysis
 func calculateThreatLevel(content string, contentType string) (string, bool) {
 	if contentType == "image" {
@@ -153,8 +171,11 @@ func (s *Storage) AddWithType(content, contentType string, imageData []byte) err
 	// For text content, check if duplicate exists and update timestamp if found
 	if contentType == "text" {
 		var existingID string
-		query := "SELECT id FROM clipboard_items WHERE content = ? AND content_type = ? LIMIT 1"
-		err := s.db.QueryRow(query, content, contentType).Scan(&existingID)
+		normalizedContent := normalizeContentForDeduplication(content)
+		
+		// Check for existing entries with the same normalized content
+		query := "SELECT id FROM clipboard_items WHERE TRIM(content) = ? AND content_type = ? LIMIT 1"
+		err := s.db.QueryRow(query, normalizedContent, contentType).Scan(&existingID)
 		if err == nil {
 			// Duplicate found, update timestamp
 			updateQuery := "UPDATE clipboard_items SET timestamp = ? WHERE id = ?"
@@ -246,6 +267,113 @@ func (s *Storage) GetAll() []ClipboardItem {
 	return items
 }
 
+// GetItemCount returns the total number of items in storage
+func (s *Storage) GetItemCount() int {
+	var count int
+	query := "SELECT COUNT(*) FROM clipboard_items"
+	err := s.db.QueryRow(query).Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+// GetAllMeta returns lightweight metadata for all items (without image data)
+func (s *Storage) GetAllMeta() []ClipboardItemMeta {
+	query := "SELECT id, content, content_type, timestamp, threat_level, safe_entry FROM clipboard_items ORDER BY timestamp DESC"
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return []ClipboardItemMeta{}
+	}
+	defer rows.Close()
+
+	var items []ClipboardItemMeta
+	for rows.Next() {
+		var item ClipboardItemMeta
+		err := rows.Scan(&item.ID, &item.Content, &item.ContentType, &item.Timestamp, &item.ThreatLevel, &item.SafeEntry)
+		if err != nil {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	return items
+}
+
+// GetPage returns a page of lightweight metadata items (without image data)
+func (s *Storage) GetPage(offset, limit int) []ClipboardItemMeta {
+	query := "SELECT id, content, content_type, timestamp, threat_level, safe_entry FROM clipboard_items ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+	rows, err := s.db.Query(query, limit, offset)
+	if err != nil {
+		return []ClipboardItemMeta{}
+	}
+	defer rows.Close()
+
+	var items []ClipboardItemMeta
+	for rows.Next() {
+		var item ClipboardItemMeta
+		err := rows.Scan(&item.ID, &item.Content, &item.ContentType, &item.Timestamp, &item.ThreatLevel, &item.SafeEntry)
+		if err != nil {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	return items
+}
+
+// GetImageData returns just the image data for a specific item
+func (s *Storage) GetImageData(id string) []byte {
+	var imageData []byte
+	query := "SELECT image_data FROM clipboard_items WHERE id = ?"
+	err := s.db.QueryRow(query, id).Scan(&imageData)
+	if err != nil {
+		return nil
+	}
+	return imageData
+}
+
+// GetFullItem returns a complete ClipboardItem including image data for a specific ID
+func (s *Storage) GetFullItem(id string) *ClipboardItem {
+	query := "SELECT id, content, content_type, image_data, timestamp, threat_level, safe_entry FROM clipboard_items WHERE id = ?"
+	row := s.db.QueryRow(query, id)
+
+	var item ClipboardItem
+	var imageData []byte
+	err := row.Scan(&item.ID, &item.Content, &item.ContentType, &imageData, &item.Timestamp, &item.ThreatLevel, &item.SafeEntry)
+	if err != nil {
+		return nil
+	}
+	item.ImageData = imageData
+
+	return &item
+}
+
+// ToClipboardItem converts ClipboardItemMeta to ClipboardItem (without image data)
+func (meta *ClipboardItemMeta) ToClipboardItem() ClipboardItem {
+	return ClipboardItem{
+		ID:          meta.ID,
+		Content:     meta.Content,
+		ContentType: meta.ContentType,
+		ImageData:   nil, // Image data not included
+		Timestamp:   meta.Timestamp,
+		ThreatLevel: meta.ThreatLevel,
+		SafeEntry:   meta.SafeEntry,
+	}
+}
+
+// ToMeta converts ClipboardItem to ClipboardItemMeta (strips image data)
+func (item *ClipboardItem) ToMeta() ClipboardItemMeta {
+	return ClipboardItemMeta{
+		ID:          item.ID,
+		Content:     item.Content,
+		ContentType: item.ContentType,
+		Timestamp:   item.Timestamp,
+		ThreatLevel: item.ThreatLevel,
+		SafeEntry:   item.SafeEntry,
+	}
+}
+
 func (s *Storage) GetByID(id string) *ClipboardItem {
 	query := "SELECT id, content, content_type, image_data, timestamp, threat_level, safe_entry FROM clipboard_items WHERE id = ?"
 	row := s.db.QueryRow(query, id)
@@ -313,7 +441,8 @@ func (s *Storage) DeduplicateExisting() (int, error) {
 	for _, item := range items {
 		// Create a key for text content
 		if item.ContentType == "text" {
-			key := fmt.Sprintf("text:%s", item.Content)
+			normalizedContent := normalizeContentForDeduplication(item.Content)
+			key := fmt.Sprintf("text:%s", normalizedContent)
 			if _, exists := seenContent[key]; exists {
 				// This is a duplicate, mark for deletion
 				toDelete = append(toDelete, item.ID)

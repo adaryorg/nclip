@@ -79,7 +79,8 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 			break
 		}
 
-		item := m.filteredItems[itemIndex]
+		itemMeta := m.filteredItems[itemIndex]
+		item := itemMeta.ToClipboardItem() // Convert to full item for display (no image data needed)
 		displayLines := m.getItemDisplayLines(item, contentWidth)
 
 		// Get colored security icon for non-selected items
@@ -157,7 +158,8 @@ func (m Model) calculateVisibleItems(contentHeight, contentWidth int) (int, []in
 
 	// Calculate lines needed for each item
 	itemLines := make([]int, len(m.filteredItems))
-	for i, item := range m.filteredItems {
+	for i, itemMeta := range m.filteredItems {
+		item := itemMeta.ToClipboardItem() // Convert for line calculation
 		itemLines[i] = len(m.getItemDisplayLines(item, contentWidth)) + 1 // +1 for separator
 	}
 
@@ -229,7 +231,8 @@ func (m Model) calculateVisibleItems(contentHeight, contentWidth int) (int, []in
 func (m Model) calculateVisibleItemsFromCursor(contentHeight, contentWidth int, scrollUp bool) (int, []int) {
 	// Calculate lines needed for each item
 	itemLines := make([]int, len(m.filteredItems))
-	for i, item := range m.filteredItems {
+	for i, itemMeta := range m.filteredItems {
+		item := itemMeta.ToClipboardItem() // Convert for line calculation
 		itemLines[i] = len(m.getItemDisplayLines(item, contentWidth)) + 1 // +1 for separator
 	}
 
