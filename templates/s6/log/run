@@ -1,0 +1,13 @@
+#!/bin/sh
+# NClip daemon s6 log service script
+# This handles logging for the nclip daemon
+
+# Create log directory if it doesn't exist
+LOG_DIR="/var/log/nclip"
+if [ ! -d "$LOG_DIR" ]; then
+    mkdir -p "$LOG_DIR"
+    chown nclip:nclip "$LOG_DIR"
+fi
+
+# Use s6-log for log management
+exec s6-log -d3 -S1000000 -n10 t "$LOG_DIR"

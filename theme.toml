@@ -1,0 +1,44 @@
+[header]
+foreground = "8"
+background = ""
+bold = true
+
+[status]
+foreground = "8"
+background = ""
+bold = false
+
+[search]
+foreground = "141"
+background = ""
+bold = true
+
+[warning]
+foreground = "9"
+background = ""
+bold = true
+
+[selected]
+foreground = "15"
+background = "55"  # Only background kept for selected item visibility
+bold = false
+
+[alternate_background]
+foreground = ""
+background = ""  # Background removed for better syntax highlighting
+bold = false
+
+[normal_background]
+foreground = ""
+background = ""
+bold = false
+
+[frame.border]
+foreground = "8"
+background = ""
+bold = false
+
+[frame.background]
+foreground = ""
+background = ""  # Background removed for better syntax highlighting
+bold = false

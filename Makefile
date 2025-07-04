@@ -4,7 +4,7 @@
 help:
 	@echo "Available targets:"
 	@echo "  clean        - Remove all built artifacts"
-	@echo "  build        - Build nclip and nclipdaemond binaries"
+	@echo "  build        - Build nclip and nclipd binaries"
 	@echo "  install      - Install binaries and start/restart daemon service"
 	@echo "  test         - Run all unit tests"
 	@echo "  test-verbose - Run all unit tests with verbose output"
@@ -15,15 +15,15 @@ help:
 # Clean all built artifacts
 clean:
 	@echo "Cleaning built artifacts..."
-	rm -f nclip nclipdaemon
+	rm -f nclip nclipd
 	@echo "Clean complete."
 
 # Build both binaries
 build:
 	@echo "Building nclip (TUI)..."
 	go build -o nclip ./cmd
-	@echo "Building nclipdaemon (daemon)..."
-	go build -o nclipdaemon ./cmd/daemon
+	@echo "Building nclipd (daemon)..."
+	go build -o nclipd ./cmd/nclipd
 	@echo "Build complete."
 
 # Install binaries and manage daemon service
@@ -34,12 +34,12 @@ install: build
 	@echo "Installing binaries..."
 	mkdir -p ~/.local/bin
 	cp nclip ~/.local/bin/nclip
-	cp nclipdaemon ~/.local/bin/nclipdaemon
+	cp nclipd ~/.local/bin/nclipd
 
 
 	@echo "Installing systemd service..."
 	mkdir -p ~/.config/systemd/user
-	cp nclip.service ~/.config/systemd/user/
+	cp templates/systemd/nclip.service ~/.config/systemd/user/
 	
 	@echo "Reloading systemd and managing service..."
 	systemctl --user daemon-reload

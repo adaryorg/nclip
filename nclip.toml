@@ -1,0 +1,4 @@
+[editor]
+text_editor = "nano"
+image_editor = "gimp"
+image_viewer = "loupe"

@@ -1,0 +1,13 @@
+#!/bin/sh
+# NClip daemon runit log service script
+# This handles logging for the nclip daemon
+
+# Create log directory if it doesn't exist
+LOG_DIR="/var/log/nclip"
+if [ ! -d "$LOG_DIR" ]; then
+    mkdir -p "$LOG_DIR"
+    chown nclip:nclip "$LOG_DIR"
+fi
+
+# Use svlogd for log rotation
+exec svlogd -tt "$LOG_DIR"

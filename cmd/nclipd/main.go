@@ -33,18 +33,24 @@ import (
 
 	"github.com/adaryorg/nclip/internal/clipboard"
 	"github.com/adaryorg/nclip/internal/config"
+	"github.com/adaryorg/nclip/internal/logging"
 	"github.com/adaryorg/nclip/internal/security"
 	"github.com/adaryorg/nclip/internal/storage"
 )
 
 func main() {
-	cfg, err := config.Load()
+	cfg, err := config.LoadDaemonConfig()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		log.Fatalf("Failed to load daemon configuration: %v", err)
 	}
+
+	// Initialize logging with configured level
+	logging.SetLevel(cfg.Logging.Level)
+	logging.Info("Starting NClip daemon with log level: %s", cfg.Logging.Level)
 
 	store, err := storage.New(cfg.Database.MaxEntries)
 	if err != nil {
+		logging.Error("Failed to initialize storage: %v", err)
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 	defer store.Close()
@@ -52,12 +58,12 @@ func main() {
 	monitor := clipboard.NewMonitorWithSecurity(
 		func(content string) {
 			if err := store.Add(content); err != nil {
-				log.Printf("Failed to store clipboard content: %v", err)
+				logging.Error("Failed to store clipboard content: %v", err)
 			}
 		},
 		func(imageData []byte, description string) {
 			if err := store.AddImage(imageData, description); err != nil {
-				log.Printf("Failed to store clipboard image: %v", err)
+				logging.Error("Failed to store clipboard image: %v", err)
 			}
 		},
 		func(content string, threats []security.SecurityThreat) {
@@ -66,10 +72,10 @@ func main() {
 				threat := security.GetHighestThreat(threats)
 				if threat != nil {
 					if security.IsHighRiskThreat(threats) {
-						log.Printf("SECURITY: High-risk %s content detected (%.0f%% confidence): %s - stored with warning indicator",
+						logging.Warn("SECURITY: High-risk %s content detected (%.0f%% confidence): %s - stored with warning indicator",
 							threat.Type, threat.Confidence*100, threat.Reason)
 					} else {
-						log.Printf("SECURITY: Medium-risk %s content detected (%.0f%% confidence): %s - stored with caution indicator",
+						logging.Info("SECURITY: Medium-risk %s content detected (%.0f%% confidence): %s - stored with caution indicator",
 							threat.Type, threat.Confidence*100, threat.Reason)
 					}
 				}
@@ -90,6 +96,7 @@ func main() {
 	}()
 
 	if err := monitor.Start(ctx); err != nil && err != context.Canceled {
+		logging.Error("Monitor failed: %v", err)
 		log.Fatalf("Monitor failed: %v", err)
 	}
 }

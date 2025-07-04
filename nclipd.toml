@@ -1,0 +1,5 @@
+[database]
+max_entries = 1000
+
+[logging]
+level = "error"  # Options: debug, info, warn, error

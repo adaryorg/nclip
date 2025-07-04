@@ -1,0 +1,28 @@
+#!/bin/sh
+# NClip daemon s6 service script
+# Place this directory structure in /etc/s6/sv/nclip/
+# Make executable: chmod +x /etc/s6/sv/nclip/run
+# Enable: s6-service add default nclip
+
+# Change to the user who should run the daemon
+USER="nclip"
+GROUP="nclip"
+
+# Change this to the actual path where nclipd is installed
+DAEMON="/usr/local/bin/nclipd"
+
+# Ensure the daemon binary exists
+if [ ! -x "$DAEMON" ]; then
+    echo "ERROR: Daemon binary not found at $DAEMON" >&2
+    exit 1
+fi
+
+# Create config directory if it doesn't exist
+CONFIG_DIR="/home/$USER/.config/nclip"
+if [ ! -d "$CONFIG_DIR" ]; then
+    mkdir -p "$CONFIG_DIR"
+    chown "$USER:$GROUP" "$CONFIG_DIR"
+fi
+
+# Run the daemon with s6-setuidgid for user switching
+exec s6-setuidgid "$USER" "$DAEMON" 2>&1
