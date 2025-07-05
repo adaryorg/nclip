@@ -156,8 +156,8 @@ type SecurityIndicators struct {
 func GetSecurityIndicators(caps TerminalCapabilities) SecurityIndicators {
 	// Use simple ASCII characters for all terminals
 	return SecurityIndicators{
-		HighRisk:   "[!]",
-		MediumRisk: "[?]",
+		HighRisk:   "[h]",
+		MediumRisk: "[m]",
 		Clean:      "",
 	}
 }
@@ -215,5 +215,5 @@ func (s *SecurityIconHelper) GetCapabilities() TerminalCapabilities {
 
 // GetIndicatorDescription returns a human-readable description of the indicators
 func (s *SecurityIconHelper) GetIndicatorDescription() string {
-	return "Icons: [!]=high risk [?]=medium risk"
+	return "Icons: [h]=high risk [m]=medium risk"
 }

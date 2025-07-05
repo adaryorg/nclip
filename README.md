@@ -51,6 +51,9 @@ systemctl --user start nclip
 # Start the TUI clipboard manager (default)
 nclip
 
+# Remove duplicate entries from clipboard history
+nclip --deduplicate
+
 # Clear all stored security hash information
 nclip --remove-security-information
 
@@ -58,7 +61,13 @@ nclip --remove-security-information
 nclip --help
 ```
 
-#### Security Hash Management
+#### Database Maintenance
+
+The `--deduplicate` flag removes duplicate entries from clipboard history. This is useful for:
+
+- Cleaning up databases that may contain duplicates from before deduplication was implemented
+- Reclaiming storage space
+- Improving performance with large histories
 
 The `--remove-security-information` flag clears all stored security hashes. This is useful when:
 
@@ -75,21 +84,23 @@ The `--remove-security-information` flag clears all stored security hashes. This
 - `j/k` or `↑/↓` - Navigate up/down
 - `/` - Enter search mode
 - `c` - Clear current filter
+- `?` - Show help
+- `g` - Go to first entry
+- `G` - Go to last entry
+- `Page Up/Page Down` - Navigate by page
 - `s` - Show image in full-screen (images only)
 - `e` - Edit item (text editor for text, image editor for images)
-- `d` - Delete item (press `d` again to confirm)
+- `x` - Delete item (press `x` again to confirm)
+- `i` - Filter to show only image content
+- `h` - Filter to show only high-risk security items
+- `m` - Filter to show only medium-risk security items
 - `Ctrl+S` - Security scan current item (analyze for sensitive content)
 - `Enter` - Copy item to clipboard and exit
 - `q` or `Ctrl+C` - Quit
 
 **Security Visual Indicators:**
 
-The application automatically detects your terminal's capabilities and uses appropriate indicators:
-
-- **Modern terminals** (Kitty, Alacritty, iTerm2, GNOME Terminal): `🔒` and `⚠️` emoji icons
-- **Unicode terminals**: `⚡` (high risk) and `⚪` (medium risk) symbols
-- **Color terminals**: `!` (red, high risk) and `?` (yellow, medium risk)
-- **Basic terminals**: `[H]` (high risk) and `[M]` (medium risk) text indicators
+- **All terminals**: `[h]` (red, high risk) and `[m]` (yellow, medium risk) text indicators
 
 #### Search Mode
 
@@ -113,7 +124,7 @@ NClip includes comprehensive security detection to protect against accidentally 
 
 The daemon automatically scans all clipboard content for:
 
-**High-Risk Content (🔒):**
+**High-Risk Content:**
 
 - JWT tokens
 - API keys (GitHub, AWS, Google, Slack, Discord, Stripe, etc.)
@@ -121,7 +132,7 @@ The daemon automatically scans all clipboard content for:
 - Database connection strings
 - SSL certificates and PGP keys
 
-**Medium-Risk Content (⚠️):**
+**Medium-Risk Content:**
 
 - Password-like patterns
 - Environment variables with sensitive names
@@ -138,20 +149,12 @@ The daemon automatically scans all clipboard content for:
 
 ### Terminal Compatibility
 
-The security indicators automatically adapt to your terminal's capabilities:
+The security indicators
 
-| Terminal Type    | High Risk                        | Medium Risk                         | Example Terminals                        |
-| ---------------- | -------------------------------- | ----------------------------------- | ---------------------------------------- |
-| **Modern/Emoji** | 🔒                               | ⚠️                                  | Kitty, Alacritty, iTerm2, GNOME Terminal |
-| **Unicode**      | ⚡                               | ⚪                                  | Most xterm-compatible terminals          |
-| **Color**        | <span style="color:red">!</span> | <span style="color:yellow">?</span> | Basic color terminals                    |
-| **Basic**        | [H]                              | [M]                                 | Simple/legacy terminals                  |
-
-The application detects terminal capabilities by checking:
-
-- Environment variables (`TERM`, `TERM_PROGRAM`, `LANG`)
-- Unicode/emoji rendering support
-- ANSI color support
+| Risk Level      | Indicator | Color  | Description                           |
+| --------------- | --------- | ------ | ------------------------------------- |
+| **High Risk**   | `[h]`     | Red    | JWT tokens, API keys, SSH keys, etc.  |
+| **Medium Risk** | `[m]`     | Yellow | Passwords, credit cards, tokens, etc. |
 
 ### Security Hash Management
 
@@ -171,30 +174,41 @@ This clears the security hash database, allowing previously blocked content to b
 
 ## Configuration
 
-### Configuration File Location
+### Configuration Files
 
-The configuration file is automatically created at:
+NClip uses separate configuration files for different components:
 
 ```
-~/.config/nclip/config.toml
+~/.config/nclip/nclip.toml     # TUI application settings
+~/.config/nclip/nclipd.toml    # Daemon settings
+~/.config/nclip/theme.toml     # Theme customization
 ```
+
+All configuration files are automatically created with default values on first run.
 
 ### Configuration Options
 
-#### Database Settings
+#### TUI Configuration (`nclip.toml`)
+
+```toml
+[editor]
+text_editor = "nano"  # Text editor for clipboard text
+image_editor = "gimp" # Image editor for clipboard images
+
+[mouse]
+enable = false  # Enable mouse text selection in terminal (default: false)
+```
+
+#### Daemon Configuration (`nclipd.toml`)
 
 ```toml
 [database]
 max_entries = 1000  # Maximum clipboard entries to keep
 ```
 
-#### Editor Settings
+#### Theme Configuration (`theme.toml`)
 
-```toml
-[editor]
-text_editor = "nano"  # Text editor for clipboard text
-image_editor = "gimp" # Image editor for clipboard images
-```
+See [THEME.md](THEME.md) for complete theming documentation.
 
 **Text Editor Options:**
 
@@ -212,19 +226,25 @@ image_editor = "gimp" # Image editor for clipboard images
 - `"eog"` - Eye of GNOME image viewer
 - `"feh"` - Lightweight image viewer
 
-#### Theme Configuration
+**Mouse Configuration:**
 
-See [THEME.md](THEME.md) for complete theming documentation.
+- `enable = false` - Disable mouse support (default, recommended for clipboard apps)
+- `enable = true` - Enable mouse text selection in terminal
 
-### Sample Configuration
+### Customizing Settings
 
-Copy the sample configuration to get started:
+Edit the appropriate configuration file to customize settings:
 
 ```bash
-cp config.toml.sample ~/.config/nclip/config.toml
-```
+# Edit TUI settings (editors, mouse support)
+nano ~/.config/nclip/nclip.toml
 
-Then edit `~/.config/nclip/config.toml` to customize your settings.
+# Edit daemon settings (database limits)
+nano ~/.config/nclip/nclipd.toml
+
+# Edit theme colors and appearance
+nano ~/.config/nclip/theme.toml
+```
 
 ## Image Support
 
@@ -376,14 +396,14 @@ journalctl --user -u nclip -f
 
 **Configuration not loading:**
 
-- Verify config file location: `~/.config/nclip/config.toml`
-- Check TOML syntax with: `toml-validator config.toml`
+- Verify config files exist in: `~/.config/nclip/`
+- Check TOML syntax with: `toml-validator ~/.config/nclip/*.toml`
 - Review logs for parsing errors
 
 **Image editor not launching:**
 
 - Verify image editor is installed: `which gimp`
-- Check configuration: `image_editor = "gimp"`
+- Check TUI configuration: `image_editor = "gimp"` in `~/.config/nclip/nclip.toml`
 - Try alternative editors: `"krita"`, `"eog"`, `"feh"`
 
 ### Debug Information

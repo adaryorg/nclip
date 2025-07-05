@@ -126,26 +126,38 @@ func TestConfig_CustomValues(t *testing.T) {
 		t.Fatalf("Failed to create config dir: %v", err)
 	}
 
-	// Create custom config file
-	configPath := filepath.Join(configDir, "config.toml")
-	customConfig := `[database]
+	// Create custom daemon config file
+	daemonConfigPath := filepath.Join(configDir, "nclipd.toml")
+	daemonConfig := `[database]
 max_entries = 500
+`
+	if err := os.WriteFile(daemonConfigPath, []byte(daemonConfig), 0644); err != nil {
+		t.Fatalf("Failed to write daemon config file: %v", err)
+	}
 
-[theme.header]
+	// Create custom theme config file
+	themeConfigPath := filepath.Join(configDir, "theme.toml")
+	themeConfig := `[header]
 foreground = "red"
 background = "blue"
 bold = false
 
-[theme.status]
+[status]
 foreground = "yellow"
+`
+	if err := os.WriteFile(themeConfigPath, []byte(themeConfig), 0644); err != nil {
+		t.Fatalf("Failed to write theme config file: %v", err)
+	}
 
-[editor]
+	// Create custom TUI config file
+	tuiConfigPath := filepath.Join(configDir, "nclip.toml")
+	tuiConfig := `[editor]
 text_editor = "vim"
 image_editor = "gimp"
 image_viewer = "feh"
 `
-	if err := os.WriteFile(configPath, []byte(customConfig), 0644); err != nil {
-		t.Fatalf("Failed to write config file: %v", err)
+	if err := os.WriteFile(tuiConfigPath, []byte(tuiConfig), 0644); err != nil {
+		t.Fatalf("Failed to write TUI config file: %v", err)
 	}
 
 	// Temporarily override home directory
@@ -245,8 +257,8 @@ func TestConfig_MalformedToml(t *testing.T) {
 		t.Fatalf("Failed to create config dir: %v", err)
 	}
 
-	// Create malformed config file
-	configPath := filepath.Join(configDir, "config.toml")
+	// Create malformed daemon config file (missing closing bracket)
+	configPath := filepath.Join(configDir, "nclipd.toml")
 	malformedConfig := `[database
 max_entries = 500
 invalid syntax here
@@ -265,8 +277,8 @@ invalid syntax here
 	if err == nil {
 		t.Error("Expected error when loading malformed config")
 	}
-	if !strings.Contains(err.Error(), "failed to decode config file") {
-		t.Errorf("Expected decode error, got: %v", err)
+	if !strings.Contains(err.Error(), "failed to decode daemon config file") {
+		t.Errorf("Expected daemon config decode error, got: %v", err)
 	}
 }
 

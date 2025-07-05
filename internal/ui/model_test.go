@@ -522,7 +522,7 @@ func TestApplyContentFilter(t *testing.T) {
 	testModel := Model{useBasicColors: false}
 	
 	// Create test items
-	testItems := []storage.ClipboardItem{
+	testItems := []storage.ClipboardItemMeta{
 		{ID: "1", Content: "Normal text", ContentType: "text", ThreatLevel: ""},
 		{ID: "2", Content: "Image data", ContentType: "image", ThreatLevel: ""},
 		{ID: "3", Content: "Suspicious content", ContentType: "text", ThreatLevel: "high"},
@@ -544,7 +544,7 @@ func TestApplyContentFilter(t *testing.T) {
 	
 	for _, test := range tests {
 		testModel.filterMode = test.filterMode
-		result := testModel.applyContentFilter(testItems)
+		result := (&testModel).applyContentFilter(testItems)
 		
 		if len(result) != test.expectedCount {
 			t.Errorf("Filter mode '%s': expected %d items, got %d (%s)", 
@@ -633,3 +633,4 @@ func TestDetectTerminalCapabilities(t *testing.T) {
 		}
 	}
 }
+

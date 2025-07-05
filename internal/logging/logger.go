@@ -25,7 +25,6 @@ SOFTWARE.
 package logging
 
 import (
-	"fmt"
 	"log"
 	"strings"
 )
@@ -96,26 +95,3 @@ func Error(format string, args ...interface{}) {
 	}
 }
 
-func Debugf(format string, args ...interface{}) {
-	Debug(format, args...)
-}
-
-func Infof(format string, args ...interface{}) {
-	Info(format, args...)
-}
-
-func Warnf(format string, args ...interface{}) {
-	Warn(format, args...)
-}
-
-func Errorf(format string, args ...interface{}) {
-	Error(format, args...)
-}
-
-// Legacy support - for backwards compatibility with existing fmt.Printf calls
-func Printf(format string, args ...interface{}) {
-	// Default to INFO level for existing printf calls
-	if shouldLog(INFO) {
-		fmt.Printf(format, args...)
-	}
-}

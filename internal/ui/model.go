@@ -1609,47 +1609,6 @@ func (m Model) renderImageView() string {
 	return m.renderImageViewNew()
 }
 
-// renderImageDebugView shows debug info about why image support wasn't detected
-func (m Model) renderImageDebugView() string {
-
-	debugContent := fmt.Sprintf(`Image Viewer Debug Information
-
-Terminal Detection Results:
-- TERM_PROGRAM: %q
-- TERM: %q  
-- KITTY_WINDOW_ID: %q
-- WEZTERM_EXECUTABLE: %q
-- WEZTERM_PANE: %q
-- KONSOLE_VERSION: %q
-
-Detection Logic:
-✗ Not detected as supporting Kitty graphics protocol
-
-Supported terminals with Kitty graphics protocol:
-- Kitty: TERM_PROGRAM="kitty" or KITTY_WINDOW_ID set
-- Ghostty: TERM_PROGRAM="ghostty"  
-- WezTerm: TERM_PROGRAM="WezTerm" or WEZTERM_* vars set
-- Konsole: TERM_PROGRAM="Konsole" or KONSOLE_VERSION set
-- Or TERM containing: kitty, wezterm, konsole
-
-Image info: %s (%d bytes)
-
-Press any key to return to list`,
-		os.Getenv("TERM_PROGRAM"),
-		os.Getenv("TERM"),
-		os.Getenv("KITTY_WINDOW_ID"),
-		os.Getenv("WEZTERM_EXECUTABLE"),
-		os.Getenv("WEZTERM_PANE"),
-		os.Getenv("KONSOLE_VERSION"),
-		m.viewingImage.Content,
-		len(m.viewingImage.ImageData))
-
-	// Use standard dialog dimensions (consistent with all other views)
-	dialogWidth, dialogHeight, contentWidth, _ := m.calculateDialogDimensions()
-
-	frameContent := m.buildFrameContent("Image Viewer - Debug Mode", debugContent, "v/esc/q: close", contentWidth)
-	return m.createFramedDialog(dialogWidth, dialogHeight, frameContent)
-}
 
 // renderSimpleImageView for terminals that don't support Kitty graphics
 func (m Model) renderSimpleImageView() string {
@@ -1700,80 +1659,6 @@ func (m Model) renderSimpleImageView() string {
 	return m.createFramedDialog(dialogWidth, dialogHeight, frameContent)
 }
 
-// drawImageFrame draws a frame around the image area
-func (m Model) drawImageFrame(startX, startY, width, height int, format string, imgWidth, imgHeight int) string {
-	var result strings.Builder
-
-	headerStyle := m.createStyle(m.config.Theme.Header).Bold(true).Foreground(m.parseColor("35"))
-	statusStyle := m.createStyle(m.config.Theme.Status).Foreground(m.parseColor("248"))
-
-	// Top border
-	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY, startX))
-	result.WriteString("╭" + strings.Repeat("─", width-2) + "╮")
-
-	// Header line
-	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+1, startX))
-	var title string
-	if format != "" {
-		title = fmt.Sprintf(" Image View (%dx%d %s, %d bytes) ", imgWidth, imgHeight, strings.ToUpper(format), len(m.viewingImage.ImageData))
-	} else {
-		title = fmt.Sprintf(" Image View (%d bytes) ", len(m.viewingImage.ImageData))
-	}
-
-	// Truncate title if too long
-	maxTitleWidth := width - 2
-	if len(title) > maxTitleWidth {
-		title = title[:maxTitleWidth-3] + "..."
-	}
-
-	// Pad title to frame width
-	padding := width - 2 - len(title)
-	leftPad := padding / 2
-	rightPad := padding - leftPad
-
-	result.WriteString("│" + strings.Repeat(" ", leftPad) + headerStyle.Render(title) + strings.Repeat(" ", rightPad) + "│")
-
-	// Separator line
-	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+2, startX))
-	result.WriteString("│" + strings.Repeat("─", width-2) + "│")
-
-	// Side borders (for image area)
-	for y := startY + 3; y < startY+height-3; y++ {
-		result.WriteString(fmt.Sprintf("\x1b[%d;%dH", y, startX))
-		result.WriteString("│")
-		result.WriteString(fmt.Sprintf("\x1b[%d;%dH", y, startX+width-1))
-		result.WriteString("│")
-	}
-
-	// Bottom separator line
-	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+height-3, startX))
-	result.WriteString("│" + strings.Repeat("─", width-2) + "│")
-
-	// Footer line
-	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+height-2, startX))
-	var footerText string
-	if m.imageDeletePending {
-		footerText = " Press 'x' again to confirm deletion, any other key to cancel "
-	} else {
-		footerText = " enter: copy | x: delete | e: edit | o: open "
-	}
-	if len(footerText) > width-2 {
-		footerText = footerText[:width-5] + "... "
-	}
-
-	// Pad footer to frame width
-	footerPadding := width - 2 - len(footerText)
-	footerLeftPad := footerPadding / 2
-	footerRightPad := footerPadding - footerLeftPad
-
-	result.WriteString("│" + strings.Repeat(" ", footerLeftPad) + statusStyle.Render(footerText) + strings.Repeat(" ", footerRightPad) + "│")
-
-	// Bottom border
-	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+height-1, startX))
-	result.WriteString("╰" + strings.Repeat("─", width-2) + "╯")
-
-	return result.String()
-}
 
 // scaleImageForFrame scales an image to fit within the frame if necessary
 func (m Model) scaleImageForFrame(imageData []byte, imgWidth, imgHeight, frameWidth, frameHeight int) []byte {
@@ -2313,7 +2198,7 @@ func (m Model) getSecurityIcon(item storage.ClipboardItem) string {
 		return m.iconHelper.GetMediumRiskIcon()
 	case "low":
 		// Show low risk with a simple icon
-		return "[?]" // Simple low risk indicator
+		return "[m]" // Simple low risk indicator
 	default: // "none"
 		return ""
 	}
@@ -2333,11 +2218,11 @@ func (m Model) getPlainSecurityIcon(item storage.ClipboardItem) string {
 	// Use stored threat level for display - return plain icons without colors
 	switch item.ThreatLevel {
 	case "high":
-		return "[!]"
+		return "[h]"
 	case "medium":
-		return "[?]"
+		return "[m]"
 	case "low":
-		return "[?]"
+		return "[m]"
 	default: // "none"
 		return ""
 	}
@@ -2816,8 +2701,8 @@ func (m Model) generateHelpContent() []string {
 	lines = append(lines, "    - Credit card numbers")
 	lines = append(lines, "")
 	lines = append(lines, "  Security visual indicators:")
-	lines = append(lines, "    [!]          High-risk security content")
-	lines = append(lines, "    [?]          Medium-risk security content")
+	lines = append(lines, "    [h]          High-risk security content")
+	lines = append(lines, "    [m]          Medium-risk security content")
 	lines = append(lines, "")
 
 

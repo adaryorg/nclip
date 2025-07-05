@@ -1,6 +1,6 @@
 # NClip Theme Configuration
 
-NClip supports comprehensive theme customization through the configuration file located at `~/.config/nclip/config.toml`. This document explains how to configure colors and provides a reference for available color values.
+NClip supports comprehensive theme customization through the theme configuration file located at `~/.config/nclip/theme.toml`. This document explains how to configure colors and provides a reference for available color values.
 
 ## Theme Configuration Structure
 
@@ -8,7 +8,7 @@ The theme configuration is organized into sections for different UI elements:
 
 ```toml
 [theme.header]
-foreground = "12"
+foreground = "13"
 background = ""
 bold = true
 
@@ -18,7 +18,7 @@ background = ""
 bold = false
 
 [theme.search]
-foreground = "11"
+foreground = "141"
 background = ""
 bold = true
 
@@ -29,7 +29,7 @@ bold = true
 
 [theme.selected]
 foreground = "0"
-background = "12"
+background = "55"
 bold = false
 
 [theme.alternate_background]
@@ -41,21 +41,26 @@ bold = false
 foreground = ""
 background = ""
 bold = false
+
+[theme.frame_border]
+foreground = "39"
+background = ""
+bold = false
 ```
 
 ## UI Elements
 
 ### `header`
 - **Purpose**: Main application title "Clipboard Manager"
-- **Default**: Bright blue, bold
+- **Default**: Bright magenta, bold
 
 ### `status`
-- **Purpose**: Footer help text and status messages
+- **Purpose**: Footer help text and status messages (uses pipe | separators)
 - **Default**: Gray
 
 ### `search`
 - **Purpose**: Search prompt and query text
-- **Default**: Bright yellow, bold
+- **Default**: Purple, bold
 
 ### `warning`
 - **Purpose**: Delete confirmation messages
@@ -63,7 +68,7 @@ bold = false
 
 ### `selected`
 - **Purpose**: Currently selected/highlighted clipboard entry
-- **Default**: Black text on bright blue background
+- **Default**: Black text on purple background
 
 ### `alternate_background`
 - **Purpose**: Background for odd-numbered clipboard entries
@@ -72,6 +77,10 @@ bold = false
 ### `normal_background`
 - **Purpose**: Background for even-numbered clipboard entries
 - **Default**: Transparent/default terminal background
+
+### `frame_border`
+- **Purpose**: Border around the main content area
+- **Default**: Cyan
 
 ## Color Properties
 
@@ -172,6 +181,11 @@ foreground = "244"  # Medium Light Gray
 background = ""
 bold = false
 
+[theme.search]
+foreground = "11"   # Bright Yellow
+background = ""
+bold = true
+
 [theme.selected]
 foreground = "0"    # Black
 background = "14"   # Bright Cyan
@@ -180,6 +194,11 @@ bold = false
 [theme.alternate_background]
 foreground = ""
 background = "235"  # Dark Gray
+bold = false
+
+[theme.frame_border]
+foreground = "6"    # Cyan
+background = ""
 bold = false
 ```
 
@@ -195,6 +214,11 @@ foreground = "8"   # Gray
 background = ""
 bold = false
 
+[theme.search]
+foreground = "5"   # Magenta
+background = ""
+bold = true
+
 [theme.selected]
 foreground = "15"  # Bright White
 background = "4"   # Blue
@@ -203,6 +227,11 @@ bold = false
 [theme.alternate_background]
 foreground = ""
 background = "253" # Near White
+bold = false
+
+[theme.frame_border]
+foreground = "4"   # Blue
+background = ""
 bold = false
 ```
 
@@ -218,6 +247,11 @@ foreground = "8"   # Gray
 background = ""
 bold = false
 
+[theme.search]
+foreground = "15"  # Bright White
+background = ""
+bold = true
+
 [theme.selected]
 foreground = "0"   # Black
 background = "15"  # Bright White
@@ -226,6 +260,11 @@ bold = false
 [theme.alternate_background]
 foreground = ""
 background = "8"   # Gray
+bold = false
+
+[theme.frame_border]
+foreground = "15"  # Bright White
+background = ""
 bold = false
 ```
 
@@ -250,6 +289,6 @@ bold = false
 - Consider using bold text for important elements
 
 ### Configuration Not Loading
-- Ensure the file is located at `~/.config/nclip/config.toml`
+- Ensure the file is located at `~/.config/nclip/theme.toml`
 - Check file permissions
 - Verify TOML syntax is correct
