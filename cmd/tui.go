@@ -37,7 +37,15 @@ import (
 func startTUI(store *storage.Storage, cfg *config.Config) {
 	model := ui.NewModel(store, cfg)
 
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Configure program options based on configuration
+	options := []tea.ProgramOption{tea.WithAltScreen()}
+	
+	// Add mouse support if enabled in configuration
+	if cfg.Mouse.Enable {
+		options = append(options, tea.WithMouseCellMotion())
+	}
+
+	p := tea.NewProgram(model, options...)
 
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error running program: %v", err)

@@ -284,6 +284,7 @@ func abs(x int) int {
 	return x
 }
 
+
 // parseColor converts various color formats to lipgloss.Color with basic terminal fallback
 func (m Model) parseColor(colorStr string) lipgloss.Color {
 	if colorStr == "" {
@@ -521,8 +522,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.currentMode == modeSecurityWarning {
 			// In security warning mode - use same logic as text view
 			contentLines := m.getSecurityViewLines()
-			dialogHeight := m.height - 2      // 1 char padding top and bottom
-			contentHeight := dialogHeight - 4 // Border + header + footer
+			_, _, _, contentHeight := m.calculateDialogDimensions()
 			if contentHeight < 5 {
 				contentHeight = 5
 			}
@@ -616,7 +616,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.securityDeletePending = false
 				m.securityScrollOffset = 0
 				return m, nil
-			case "d":
+			case "x":
 				if m.securityDeletePending {
 					// Confirm deletion
 					// Remove from main database and add to security hash store
@@ -648,7 +648,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.securityScrollOffset = 0
 					return m, nil
 				} else {
-					// First 'd' press - enter delete confirmation mode
+					// First 'x' press - enter delete confirmation mode
 					m.securityDeletePending = true
 					return m, nil
 				}
@@ -682,8 +682,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.currentMode == modeHelp {
 			// In help mode - calculate scroll bounds first
 			helpLines := m.generateHelpContent()
-			dialogHeight := m.height - 2      // 1 char padding top and bottom
-			contentHeight := dialogHeight - 4 // Border + header + footer
+			_, _, _, contentHeight := m.calculateDialogDimensions()
 			if contentHeight < 5 {
 				contentHeight = 5
 			}
@@ -693,7 +692,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			switch msg.String() {
-			case "ctrl+c", "q", "esc", "h":
+			case "ctrl+c", "q", "esc", "?":
 				// Exit help mode
 				m.currentMode = modeList
 				return m, nil
@@ -732,8 +731,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			textLines := m.getTextViewLines()
-			dialogHeight := m.height - 2      // 1 char padding top and bottom
-			contentHeight := dialogHeight - 4 // Border + header + footer
+			_, _, _, contentHeight := m.calculateDialogDimensions()
 			if contentHeight < 5 {
 				contentHeight = 5
 			}
@@ -793,7 +791,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.editTextViewEntry(*m.viewingText)
 				}
 				return m, nil
-			case "d":
+			case "x":
 				// Delete text from database with confirmation
 				if m.viewingText != nil {
 					if m.textDeletePending {
@@ -885,7 +883,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.openImageInViewer(*m.viewingImage)
 				}
 				return m, nil
-			case "d":
+			case "x":
 				// Delete image from database with confirmation
 				if m.viewingImage != nil {
 					if m.imageDeletePending {
@@ -936,8 +934,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.currentMode == modeConfirmDelete {
 			// In delete confirmation mode
 			switch msg.String() {
-			case "d":
-				// Confirm delete by pressing 'd' again
+			case "x":
+				// Confirm delete by pressing 'x' again
 				if m.deleteCandidate != nil {
 					err := m.storage.Delete(m.deleteCandidate.ID)
 					if err == nil {
@@ -1054,7 +1052,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-			case "d":
+			case "x":
 				if len(m.filteredItems) > 0 && m.cursor < len(m.filteredItems) {
 					selectedItem := m.getCurrentItem()
 					if selectedItem == nil {
@@ -1083,8 +1081,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Page up - jump to item roughly one screen height up
 				if len(m.filteredItems) > 0 {
 					// Calculate content area height
-					dialogHeight := m.height - 2
-					contentHeight := dialogHeight - 4
+					_, _, _, contentHeight := m.calculateDialogDimensions()
 					if contentHeight < 5 {
 						contentHeight = 5
 					}
@@ -1109,8 +1106,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Page down - jump to item roughly one screen height down
 				if len(m.filteredItems) > 0 {
 					// Calculate content area height
-					dialogHeight := m.height - 2
-					contentHeight := dialogHeight - 4
+					_, _, _, contentHeight := m.calculateDialogDimensions()
 					if contentHeight < 5 {
 						contentHeight = 5
 					}
@@ -1127,6 +1123,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						newCursor = len(m.filteredItems) - 1
 					}
 					m.cursor = newCursor
+					// Preload images around new cursor position
+					go m.preloadImagesAroundCursor()
+				}
+
+			case "g":
+				// Go to first item
+				if len(m.filteredItems) > 0 {
+					m.cursor = 0
+					// Preload images around new cursor position
+					go m.preloadImagesAroundCursor()
+				}
+
+			case "G":
+				// Go to last item
+				if len(m.filteredItems) > 0 {
+					m.cursor = len(m.filteredItems) - 1
 					// Preload images around new cursor position
 					go m.preloadImagesAroundCursor()
 				}
@@ -1165,7 +1177,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterItems()
 				return m, nil
 				
-			case "!":
+			case "h":
 				// Toggle high-risk security filter
 				if m.filterMode == "security-high" {
 					m.filterMode = "" // Clear filter
@@ -1175,7 +1187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterItems()
 				return m, nil
 				
-			case "?":
+			case "m":
 				// Toggle medium-risk security filter
 				if m.filterMode == "security-medium" {
 					m.filterMode = "" // Clear filter
@@ -1185,7 +1197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterItems()
 				return m, nil
 
-			case "h":
+			case "?":
 				// Show help screen
 				m.currentMode = modeHelp
 				m.helpScrollOffset = 0
@@ -1486,18 +1498,8 @@ func (m Model) View() string {
 
 // renderMainWindow renders the main clipboard window with frame
 func (m Model) renderMainWindow() string {
-	// Calculate frame dimensions for main window
-	dialogWidth := m.width - 2        // 1 char padding left and right
-	dialogHeight := m.height - 2      // 1 char padding top and bottom
-	contentWidth := dialogWidth - 4   // Border + internal padding
-	contentHeight := dialogHeight - 4 // Border + header + footer
-
-	if contentWidth < 20 {
-		contentWidth = 20
-	}
-	if contentHeight < 5 {
-		contentHeight = 5
-	}
+	// Use standard dialog dimensions (consistent with all other views)
+	dialogWidth, dialogHeight, contentWidth, contentHeight := m.calculateDialogDimensions()
 
 	// Create header text
 	var headerText string
@@ -1521,16 +1523,16 @@ func (m Model) renderMainWindow() string {
 		headerText += " - Delete: " + preview
 	}
 
-	// Build main content
+	// Build main content area (scrolling content only)
 	mainContent := m.buildMainContent(contentWidth, contentHeight)
 
 	// Create footer text
 	var footerText string
 	switch m.currentMode {
 	case modeConfirmDelete:
-		footerText = "Press 'd' again to delete, any other key to cancel"
+		footerText = "Press 'x' again to delete, any other key to cancel"
 	case modeSearch:
-		footerText = "type filter text - enter: apply filter - esc: cancel"
+		footerText = "type filter text | enter: apply filter | esc: cancel"
 	default:
 		// Add filter status if active
 		filterStatus := ""
@@ -1544,18 +1546,19 @@ func (m Model) renderMainWindow() string {
 		}
 		
 		if m.searchQuery != "" {
-			footerText = "up/down: navigate - /: edit filter - c: clear - enter: copy - v: view - e: edit - h: help - q: quit" + filterStatus
+			footerText = "enter: copy | x: delete | v: view | e: edit | ?: help" + filterStatus
 		} else {
-			footerText = "up/down: navigate - /: search - enter: copy - v: view - e: edit - h: help - q: quit" + filterStatus
+			footerText = "enter: copy | x: delete | v: view | e: edit | ?: help" + filterStatus
 		}
 	}
 
-	// Build frame content using shared function
+	// Build frame content using shared function (consistent with all other views)
 	frameContent := m.buildFrameContent(headerText, mainContent, footerText, contentWidth)
 
-	// Create framed main window
-	return m.createMainFrameDialog(frameContent)
+	// Create framed dialog using standard function (consistent with all other views)
+	return m.createFramedDialog(dialogWidth, dialogHeight, frameContent)
 }
+
 
 // wrapText wraps text to fit within the given width, up to maxLines
 func wrapText(text string, width int, maxLines int) []string {
@@ -1641,10 +1644,8 @@ Press any key to return to list`,
 		m.viewingImage.Content,
 		len(m.viewingImage.ImageData))
 
-	// Calculate frame dimensions
-	dialogWidth := m.width - 2
-	dialogHeight := m.height - 2
-	contentWidth := dialogWidth - 4
+	// Use standard dialog dimensions (consistent with all other views)
+	dialogWidth, dialogHeight, contentWidth, _ := m.calculateDialogDimensions()
 
 	frameContent := m.buildFrameContent("Image Viewer - Debug Mode", debugContent, "v/esc/q: close", contentWidth)
 	return m.createFramedDialog(dialogWidth, dialogHeight, frameContent)
@@ -1654,11 +1655,8 @@ Press any key to return to list`,
 func (m Model) renderSimpleImageView() string {
 	headerText := "Image View - Not Supported"
 
-	// Calculate frame dimensions (same as help view)
-	dialogWidth := m.width - 2
-	dialogHeight := m.height - 2
-	contentWidth := dialogWidth - 4
-	contentHeight := dialogHeight - 4
+	// Use standard dialog dimensions (consistent with all other views)
+	dialogWidth, dialogHeight, contentWidth, contentHeight := m.calculateDialogDimensions()
 
 	// Build content lines
 	contentLines := []string{
@@ -1692,9 +1690,9 @@ func (m Model) renderSimpleImageView() string {
 	// Create footer text based on delete confirmation state
 	var footerText string
 	if m.imageDeletePending {
-		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+		footerText = "Press 'x' again to confirm deletion, any other key to cancel"
 	} else {
-		footerText = "o: open - enter: copy - e: edit - d: delete - any other key: close"
+		footerText = "enter: copy | x: delete | e: edit | o: open"
 	}
 
 	// Build frame content using standard function (like help view)
@@ -1755,9 +1753,9 @@ func (m Model) drawImageFrame(startX, startY, width, height int, format string, 
 	result.WriteString(fmt.Sprintf("\x1b[%d;%dH", startY+height-2, startX))
 	var footerText string
 	if m.imageDeletePending {
-		footerText = " Press 'd' again to confirm deletion, any other key to cancel "
+		footerText = " Press 'x' again to confirm deletion, any other key to cancel "
 	} else {
-		footerText = " o: open - enter: copy - e: edit - d: delete - any other key: close "
+		footerText = " enter: copy | x: delete | e: edit | o: open "
 	}
 	if len(footerText) > width-2 {
 		footerText = footerText[:width-5] + "... "
@@ -1984,9 +1982,8 @@ func (m Model) getSecurityViewLines() []string {
 	// Split content into lines (same as text view)
 	lines := strings.Split(content, "\n")
 
-	// Calculate available width for wrapping (same as text view)
-	dialogWidth := m.width - 2      // 1 char padding left and right
-	contentWidth := dialogWidth - 4 // Border + internal padding
+	// Use standard dialog dimensions for consistent content width
+	_, _, contentWidth, _ := m.calculateDialogDimensions()
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
@@ -2019,9 +2016,8 @@ func (m Model) renderSecurityWarning() string {
 		return "No security item to view"
 	}
 
-	// Calculate dialog dimensions - same as text view
-	dialogWidth := m.width - 2   // 1 char padding left and right
-	dialogHeight := m.height - 2 // 1 char padding top and bottom
+	// Use standard dialog dimensions (consistent with all other views)
+	dialogWidth, dialogHeight, _, _ := m.calculateDialogDimensions()
 
 	// Get content lines (ONLY the scrollable content) - same as text view
 	contentLines := m.getSecurityViewLines()
@@ -2115,9 +2111,9 @@ func (m Model) renderSecurityWarning() string {
 
 	var footerText string
 	if m.securityDeletePending {
-		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+		footerText = "Press 'x' again to confirm deletion, any other key to cancel"
 	} else {
-		baseFooter := "s: mark safe - u: mark unsafe - d: delete - up/down: scroll - any other key: close"
+		baseFooter := "enter: copy | x: delete | s: mark safe | u: mark unsafe"
 		footerText = baseFooter + scrollInfo
 	}
 
@@ -2354,23 +2350,11 @@ func (m Model) renderHelp() string {
 		return "Terminal too small for help dialog"
 	}
 
-	// Calculate dialog dimensions - leave only 1 character padding on each side
-	dialogWidth := m.width - 2   // 1 char padding left and right
-	dialogHeight := m.height - 2 // 1 char padding top and bottom
+	// Use standard dialog dimensions (consistent with all other views)
+	dialogWidth, dialogHeight, contentWidth, contentHeight := m.calculateDialogDimensions()
 
 	// Generate help content
 	helpLines := m.generateHelpContent()
-
-	// Calculate content area within the dialog (account for border + padding)
-	contentWidth := dialogWidth - 4   // Border (2) + internal padding (2)
-	contentHeight := dialogHeight - 4 // Border (2) + header + footer
-
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
-	if contentHeight < 5 {
-		contentHeight = 5
-	}
 
 	// Apply scroll limits
 	maxScrollOffset := len(helpLines) - contentHeight
@@ -2422,7 +2406,7 @@ func (m Model) renderHelp() string {
 	if maxScrollOffset > 0 {
 		scrollInfo = fmt.Sprintf(" - %d-%d/%d", start+1, end, len(helpLines))
 	}
-	footerText := "h/esc/q: close - up/down: scroll" + scrollInfo
+	footerText := "?: close" + scrollInfo
 
 	// Build frame content using shared function
 	frameContent := m.buildFrameContent(headerText, helpContent.String(), footerText, contentWidth)
@@ -2459,9 +2443,8 @@ func (m Model) getTextViewLines() []string {
 		lines = strings.Split(content, "\n")
 	}
 
-	// Calculate available width for wrapping
-	dialogWidth := m.width - 2      // 1 char padding left and right
-	contentWidth := dialogWidth - 4 // Border + internal padding
+	// Use standard dialog dimensions for consistent content width
+	_, _, contentWidth, _ := m.calculateDialogDimensions()
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
@@ -2595,23 +2578,11 @@ func (m Model) renderTextView() string {
 		return "No text to view"
 	}
 
-	// Calculate dialog dimensions - leave only 1 character padding on each side
-	dialogWidth := m.width - 2   // 1 char padding left and right
-	dialogHeight := m.height - 2 // 1 char padding top and bottom
+	// Use standard dialog dimensions (consistent with all other views)
+	dialogWidth, dialogHeight, contentWidth, contentHeight := m.calculateDialogDimensions()
 
 	// Get text lines
 	textLines := m.getTextViewLines()
-
-	// Calculate content area within the dialog
-	contentWidth := dialogWidth - 4   // Border + internal padding
-	contentHeight := dialogHeight - 4 // Border + header + footer
-
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
-	if contentHeight < 5 {
-		contentHeight = 5
-	}
 
 	// Apply scroll limits
 	maxScrollOffset := len(textLines) - contentHeight
@@ -2698,12 +2669,12 @@ func (m Model) renderTextView() string {
 	// Create footer text based on delete confirmation state and security warnings
 	var footerText string
 	if m.textDeletePending {
-		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+		footerText = "Press 'x' again to confirm deletion, any other key to cancel"
 	} else {
-		baseFooter := "v/esc/q: close - up/down: scroll - enter: copy - e: edit - d: delete"
+		baseFooter := "enter: copy | x: delete | e: edit"
 		// Add security actions if this item has security warnings
 		if m.viewingText.ThreatLevel == "high" || m.viewingText.ThreatLevel == "medium" {
-			baseFooter += " - s: mark as safe"
+			baseFooter += " | s: mark as safe"
 		}
 		footerText = baseFooter + scrollInfo
 	}
@@ -2781,9 +2752,12 @@ func (m Model) generateHelpContent() []string {
 	lines = append(lines, searchStyle.Render("BASIC NAVIGATION"))
 	lines = append(lines, "")
 	lines = append(lines, "  j/k or up/down   Navigate up/down through clipboard items")
+	lines = append(lines, "  g                Go to first item")
+	lines = append(lines, "  G                Go to last item")
+	lines = append(lines, "  pgup/pgdown      Page up/down through items")
 	lines = append(lines, "  Enter        Copy selected item to clipboard and exit")
 	lines = append(lines, "  q / Ctrl+C   Quit the application")
-	lines = append(lines, "  h            Show this help screen")
+	lines = append(lines, "  ?            Show this help screen")
 	lines = append(lines, "")
 
 	// Search and Filtering
@@ -2795,8 +2769,8 @@ func (m Model) generateHelpContent() []string {
 	lines = append(lines, "")
 	lines = append(lines, "  Content Filters:")
 	lines = append(lines, "    i            Show only images")
-	lines = append(lines, "    !            Show only high-risk security items")
-	lines = append(lines, "    ?            Show only medium-risk security items")
+	lines = append(lines, "    h            Show only high-risk security items")
+	lines = append(lines, "    m            Show only medium-risk security items")
 	lines = append(lines, "")
 	lines = append(lines, "  In search mode:")
 	lines = append(lines, "    Type         Filter items in real-time")
@@ -2811,13 +2785,13 @@ func (m Model) generateHelpContent() []string {
 	lines = append(lines, "  Basic content operations:")
 	lines = append(lines, "    v            View text/image in full-screen viewer")
 	lines = append(lines, "    e            Edit selected item in external editor")
-	lines = append(lines, "    d            Delete item (press 'd' again to confirm)")
+	lines = append(lines, "    x            Delete item (press 'x' again to confirm)")
 	lines = append(lines, "")
 	lines = append(lines, "  In text view mode:")
 	lines = append(lines, "    up/down      Scroll through text content")
 	lines = append(lines, "    Enter        Copy text to clipboard and exit")
 	lines = append(lines, "    e            Edit text (returns to viewer after editing)")
-	lines = append(lines, "    d            Delete text from database")
+	lines = append(lines, "    x            Delete text from database")
 	lines = append(lines, "    s            Mark security-flagged item as safe")
 	lines = append(lines, "    any other key Exit text viewer and return to list")
 	lines = append(lines, "")
@@ -2825,7 +2799,7 @@ func (m Model) generateHelpContent() []string {
 	lines = append(lines, "    Enter        Copy image to clipboard and exit")
 	lines = append(lines, "    o            Open image in external viewer")
 	lines = append(lines, "    e            Edit image in external editor")
-	lines = append(lines, "    d            Delete image from database")
+	lines = append(lines, "    x            Delete image from database")
 	lines = append(lines, "    any other key Exit image viewer and return to list")
 	lines = append(lines, "")
 

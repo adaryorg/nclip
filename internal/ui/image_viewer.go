@@ -48,20 +48,8 @@ func (m Model) renderImageViewNew() string {
 	// Get image dimensions for display info
 	imageWidth, imageHeight, format, err := getImageDimensions(m.viewingImage.ImageData)
 
-	// Calculate dialog dimensions - same as help window
-	dialogWidth := m.width - 2   // 1 char padding left and right
-	dialogHeight := m.height - 2 // 1 char padding top and bottom
-
-	// Calculate content area within the dialog
-	contentWidth := dialogWidth - 4   // Border + internal padding
-	contentHeight := dialogHeight - 4 // Border + header + footer
-
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
-	if contentHeight < 5 {
-		contentHeight = 5
-	}
+	// Use standard dialog dimensions (consistent with all other views)
+	dialogWidth, dialogHeight, contentWidth, contentHeight := m.calculateDialogDimensions()
 
 	// Create header text
 	var headerText string
@@ -84,9 +72,9 @@ func (m Model) renderImageViewNew() string {
 	// Create footer text based on delete confirmation state
 	var footerText string
 	if m.imageDeletePending {
-		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+		footerText = "Press 'x' again to confirm deletion, any other key to cancel"
 	} else {
-		footerText = "o: open - enter: copy - e: edit - d: delete - any other key: close"
+		footerText = "enter: copy | x: delete | e: edit | o: open"
 	}
 
 	// Build frame content using shared function
@@ -170,9 +158,9 @@ func (m Model) drawSimpleFrame(startX, startY, width, height int, format string,
 	// Create footer text based on delete confirmation state
 	var footerText string
 	if m.imageDeletePending {
-		footerText = "Press 'd' again to confirm deletion, any other key to cancel"
+		footerText = "Press 'x' again to confirm deletion, any other key to cancel"
 	} else {
-		footerText = "o: open - enter: copy - e: edit - d: delete - any other key: close"
+		footerText = "enter: copy | x: delete | e: edit | o: open"
 	}
 	if len(footerText) > width-2 {
 		footerText = footerText[:width-5] + "..."

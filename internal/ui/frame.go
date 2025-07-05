@@ -52,31 +52,23 @@ func (m Model) createFramedDialog(width, height int, content string) string {
 	return positioned
 }
 
-// createMainFrameDialog creates a framed dialog for the main window (full screen)
-func (m Model) createMainFrameDialog(content string) string {
-	// Use almost full terminal size for main window
-	dialogWidth := m.width - 2   // 1 char padding left and right
-	dialogHeight := m.height - 2 // 1 char padding top and bottom
-
-	dialogStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.parseColor(m.config.Theme.Frame.Border.Foreground)).
-		Padding(0, 1).
-		Width(dialogWidth).
-		Height(dialogHeight)
-
-	// Background colors removed to prevent interference with syntax highlighting
-
-	dialog := dialogStyle.Render(content)
-
-	// Position with minimal padding (not centered like other dialogs)
-	positioned := lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		dialog,
-	)
-
-	return positioned
+// calculateDialogDimensions returns standard dialog dimensions for consistent sizing across all views
+func (m Model) calculateDialogDimensions() (dialogWidth, dialogHeight, contentWidth, contentHeight int) {
+	// Standard dialog sizing used by all views
+	dialogWidth = m.width - 2   // 1 char padding left and right
+	dialogHeight = m.height - 2 // 1 char padding top and bottom
+	contentWidth = dialogWidth - 4   // Border + internal padding
+	contentHeight = dialogHeight - 4 // Border + header + footer
+	
+	// Apply minimum constraints
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+	if contentHeight < 5 {
+		contentHeight = 5
+	}
+	
+	return dialogWidth, dialogHeight, contentWidth, contentHeight
 }
 
 // buildFrameContent builds content for a framed dialog with header, content area, and footer
@@ -92,10 +84,10 @@ func (m Model) buildFrameContent(headerText, contentText, footerText string, con
 	content.WriteString(strings.Repeat("─", contentWidth))
 	content.WriteString("\n")
 
-	// Content
+	// Content area - just add the content as-is since buildMainContent already sized it correctly
 	content.WriteString(contentText)
 
-	// Footer separator and controls
+	// Footer separator and controls  
 	content.WriteString(strings.Repeat("─", contentWidth))
 	content.WriteString("\n")
 

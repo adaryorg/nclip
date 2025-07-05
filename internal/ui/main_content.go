@@ -32,31 +32,48 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// buildMainContent builds the content area for the main window
+// buildMainContent builds the content area for the main window with fixed layout
 func (m Model) buildMainContent(contentWidth, contentHeight int) string {
+	// Calculate the exact number of lines available for content
+	// Add 3 more lines to lower the footer by 3 rows
+	availableContentLines := contentHeight
+	
 	var content strings.Builder
+	linesRendered := 0
 
 	// Create styles
 	selectedStyle := m.createSelectedStyle(m.config.Theme.Selected)
 	statusStyle := m.createStyle(m.config.Theme.Status)
 
 	if len(m.filteredItems) == 0 {
-		// Center "no items" message
+		// Center "no items" message in the fixed content area
 		noItemsMsg := "No clipboard items found"
-		padding := (contentHeight / 2)
-		for i := 0; i < padding; i++ {
+		padding := (availableContentLines / 2)
+		
+		// Add padding lines before message
+		for i := 0; i < padding && linesRendered < availableContentLines; i++ {
 			content.WriteString("\n")
+			linesRendered++
 		}
-		// Center the message horizontally
-		msgPadding := (contentWidth - len(noItemsMsg)) / 2
-		if msgPadding > 0 {
-			content.WriteString(strings.Repeat(" ", msgPadding))
-		}
-		content.WriteString(statusStyle.Render(noItemsMsg))
-		// Fill remaining space
-		for i := padding + 1; i < contentHeight; i++ {
+		
+		// Add the message if we have space
+		if linesRendered < availableContentLines {
+			// Center the message horizontally
+			msgPadding := (contentWidth - len(noItemsMsg)) / 2
+			if msgPadding > 0 {
+				content.WriteString(strings.Repeat(" ", msgPadding))
+			}
+			content.WriteString(statusStyle.Render(noItemsMsg))
 			content.WriteString("\n")
+			linesRendered++
 		}
+		
+		// Fill remaining space to reach exact line count
+		for linesRendered < availableContentLines {
+			content.WriteString("\n")
+			linesRendered++
+		}
+		
 		return content.String()
 	}
 
@@ -68,204 +85,116 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 		m.cursor = 0
 	}
 
-	// Improved scrolling: calculate which items to show
-	_, visibleItems := m.calculateVisibleItems(contentHeight, contentWidth)
-
-	linesUsed := 0
-
-	// Render visible items
-	for i, itemIndex := range visibleItems {
-		if linesUsed >= contentHeight {
-			break
-		}
-
+	// Render items starting from cursor page, filling exactly availableContentLines
+	pageStart := m.calculatePageStart(availableContentLines, contentWidth)
+	
+	// Render items from pageStart until we fill the content area
+	for itemIndex := pageStart; itemIndex < len(m.filteredItems) && linesRendered < availableContentLines; itemIndex++ {
 		itemMeta := m.filteredItems[itemIndex]
-		item := itemMeta.ToClipboardItem() // Convert to full item for display (no image data needed)
+		item := itemMeta.ToClipboardItem()
 		displayLines := m.getItemDisplayLines(item, contentWidth)
 
-		// Get colored security icon for non-selected items
+		// Get security icons
 		coloredSecurityIcon := m.getSecurityIcon(item)
 		plainSecurityIcon := m.getPlainSecurityIcon(item)
 
-		// Render the entry, showing as many lines as fit
-		linesRendered := 0
+		// Render as many lines of this item as fit
 		for lineIndex, line := range displayLines {
-			if linesUsed >= contentHeight {
+			if linesRendered >= availableContentLines {
 				break
 			}
 
 			displayLine := line
 			
-			// For non-selected items, replace plain icon with colored icon on first line
+			// Handle security icon replacement for non-selected items
 			if itemIndex != m.cursor && lineIndex == 0 && plainSecurityIcon != "" && coloredSecurityIcon != "" {
-				// Replace the plain icon at the beginning with colored one
 				if strings.HasPrefix(line, plainSecurityIcon+" ") {
 					displayLine = strings.Replace(line, plainSecurityIcon+" ", coloredSecurityIcon+" ", 1)
 				}
 			}
 
 			if itemIndex == m.cursor {
-				// Selected item uses selected style with padding (keeps plain icon for consistent highlighting)
+				// Selected item uses selected style with padding
 				content.WriteString(selectedStyle.Render(" " + line + " "))
 			} else {
 				// Non-selected items use colored icons
 				content.WriteString("  " + displayLine)
 			}
 			content.WriteString("\n")
-			linesUsed++
 			linesRendered++
 		}
 
-		// Only add separator if we fully rendered this item and have space for more
-		shouldAddSeparator := i < len(visibleItems)-1 && 
-			linesRendered == len(displayLines) && 
-			linesUsed < contentHeight
-
-		if shouldAddSeparator {
+		// Add separator if we have space and this isn't the last item we'll show
+		if linesRendered < availableContentLines && itemIndex < len(m.filteredItems)-1 {
 			separatorChar := "─"
 			separatorWidth := contentWidth - 4 // Account for padding
 			if separatorWidth > 0 {
 				separator := strings.Repeat(separatorChar, separatorWidth)
-				// Use a subtle color for the separator
 				separatorStyle := lipgloss.NewStyle().Foreground(m.parseColor("238")) // medium dark gray
 				content.WriteString("  " + separatorStyle.Render(separator))
 				content.WriteString("\n")
-				linesUsed++
+				linesRendered++
 			}
 		}
 	}
 
-	// Only fill remaining space with empty lines if we've reached the end of all items
-	if len(visibleItems) > 0 {
-		lastVisibleIndex := visibleItems[len(visibleItems)-1]
-		if lastVisibleIndex == len(m.filteredItems)-1 {
-			// We're showing the last item, so fill remaining space
-			for linesUsed < contentHeight {
-				content.WriteString("\n")
-				linesUsed++
-			}
-		}
+	// Fill any remaining space to reach exact line count
+	for linesRendered < availableContentLines {
+		content.WriteString("\n")
+		linesRendered++
 	}
 
 	return content.String()
 }
 
-// calculateVisibleItems calculates which items should be visible with improved scrolling
-func (m Model) calculateVisibleItems(contentHeight, contentWidth int) (int, []int) {
-	if len(m.filteredItems) == 0 {
-		return 0, []int{}
+// calculatePageStart calculates which item should be the first item on the current page
+// Simple page-based scrolling: cursor moves within current page, then jumps to next page
+func (m Model) calculatePageStart(availableContentLines, contentWidth int) int {
+	if len(m.filteredItems) == 0 || m.cursor < 0 {
+		return 0
 	}
 
-	// Calculate lines needed for each item
+	// Calculate lines needed for each item (including separator)
 	itemLines := make([]int, len(m.filteredItems))
 	for i, itemMeta := range m.filteredItems {
-		item := itemMeta.ToClipboardItem() // Convert for line calculation
-		itemLines[i] = len(m.getItemDisplayLines(item, contentWidth)) + 1 // +1 for separator
+		item := itemMeta.ToClipboardItem()
+		lines := len(m.getItemDisplayLines(item, contentWidth))
+		// Add 1 for separator (except for last item)
+		if i < len(m.filteredItems)-1 {
+			lines++
+		}
+		itemLines[i] = lines
 	}
 
-	// Find the optimal starting position
-	// Strategy: Try to keep cursor visible and show as many complete items as possible
-
-	var visibleItems []int
-	var start int
-
-	// If cursor is near the top, start from beginning
-	if m.cursor < 3 {
-		start = 0
-	} else {
-		// Try to position cursor in the middle of the screen
-		targetCursorLine := contentHeight / 2
-
-		// Work backwards from cursor to find start position
-		linesFromCursor := 0
-		start = m.cursor
-
-		for start > 0 && linesFromCursor < targetCursorLine {
-			start--
-			linesFromCursor += itemLines[start]
+	// Simple approach: find which page contains the cursor
+	// Build pages sequentially until we find the one with the cursor
+	pageStart := 0
+	currentPageLines := 0
+	
+	for i := 0; i < len(m.filteredItems); i++ {
+		// Check if adding this item would exceed current page
+		if currentPageLines + itemLines[i] > availableContentLines && currentPageLines > 0 {
+			// This item starts a new page
+			if m.cursor < i {
+				// Cursor is on the previous page
+				break
+			}
+			// Start new page from this item
+			pageStart = i
+			currentPageLines = 0
 		}
-
-		// Adjust if we went too far back
-		if linesFromCursor > targetCursorLine && start < m.cursor-1 {
-			start++
-		}
-	}
-
-	// Build list of visible items from start position
-	linesUsed := 0
-	for i := start; i < len(m.filteredItems) && linesUsed < contentHeight; i++ {
-		// Always include the item, even if it will only partially fit
-		visibleItems = append(visibleItems, i)
-		linesUsed += itemLines[i]
 		
-		// If we've filled the available space, we can stop
-		if linesUsed >= contentHeight {
+		currentPageLines += itemLines[i]
+		
+		// If we've reached the cursor, we're on the right page
+		if i == m.cursor {
 			break
 		}
 	}
-
-	// Ensure cursor is visible
-	cursorVisible := false
-	for _, itemIndex := range visibleItems {
-		if itemIndex == m.cursor {
-			cursorVisible = true
-			break
-		}
-	}
-
-	// If cursor is not visible, adjust the visible items
-	if !cursorVisible {
-		if m.cursor < start {
-			// Cursor is above visible area, scroll up
-			return m.calculateVisibleItemsFromCursor(contentHeight, contentWidth, true)
-		} else {
-			// Cursor is below visible area, scroll down
-			return m.calculateVisibleItemsFromCursor(contentHeight, contentWidth, false)
-		}
-	}
-
-	return start, visibleItems
+	
+	return pageStart
 }
 
-// calculateVisibleItemsFromCursor calculates visible items ensuring cursor is visible
-func (m Model) calculateVisibleItemsFromCursor(contentHeight, contentWidth int, scrollUp bool) (int, []int) {
-	// Calculate lines needed for each item
-	itemLines := make([]int, len(m.filteredItems))
-	for i, itemMeta := range m.filteredItems {
-		item := itemMeta.ToClipboardItem() // Convert for line calculation
-		itemLines[i] = len(m.getItemDisplayLines(item, contentWidth)) + 1 // +1 for separator
-	}
-
-	var visibleItems []int
-	var start int
-
-	if scrollUp {
-		// Position cursor at bottom of visible area
-		start = m.cursor
-		linesUsed := itemLines[m.cursor]
-		visibleItems = []int{m.cursor}
-
-		// Add items above cursor, allowing partial items
-		for i := m.cursor - 1; i >= 0 && linesUsed < contentHeight; i-- {
-			start = i
-			visibleItems = append([]int{i}, visibleItems...)
-			linesUsed += itemLines[i]
-		}
-	} else {
-		// Position cursor at top of visible area
-		start = m.cursor
-		linesUsed := itemLines[m.cursor]
-		visibleItems = []int{m.cursor}
-
-		// Add items below cursor, allowing partial items
-		for i := m.cursor + 1; i < len(m.filteredItems) && linesUsed < contentHeight; i++ {
-			visibleItems = append(visibleItems, i)
-			linesUsed += itemLines[i]
-		}
-	}
-
-	return start, visibleItems
-}
 
 // getItemDisplayLines gets the display lines for an item
 func (m Model) getItemDisplayLines(item storage.ClipboardItem, availableWidth int) []string {

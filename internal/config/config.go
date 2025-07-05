@@ -38,11 +38,17 @@ type Config struct {
 	Theme    ThemeConfig    `toml:"theme"`
 	Editor   EditorConfig   `toml:"editor"`
 	Logging  LoggingConfig  `toml:"logging"`
+	Mouse    MouseConfig    `toml:"mouse"`
 }
 
 // TUI-specific configuration (nclip.toml)
 type TUIConfig struct {
 	Editor EditorConfig `toml:"editor"`
+	Mouse  MouseConfig  `toml:"mouse"`
+}
+
+type MouseConfig struct {
+	Enable bool `toml:"enable"`
 }
 
 // Theme configuration (theme.toml)
@@ -110,6 +116,7 @@ func Load() (*Config, error) {
 		Theme:    *themeConfig,
 		Editor:   tuiConfig.Editor,
 		Logging:  daemonConfig.Logging,
+		Mouse:    tuiConfig.Mouse,
 	}, nil
 }
 
@@ -145,6 +152,9 @@ func LoadTUIConfig() (*TUIConfig, error) {
 	if config.Editor.ImageViewer == "" {
 		config.Editor.ImageViewer = "loupe"
 	}
+
+	// Set default mouse configuration (disabled by default to allow text selection)
+	// Note: Mouse support can interfere with terminal text selection
 
 	return &config, nil
 }
@@ -259,6 +269,12 @@ func createDefaultTUIConfig(configPath string) error {
 text_editor = "nano"
 image_editor = "gimp"
 image_viewer = "loupe"
+
+[mouse]
+# Enable mouse support in the TUI (default: false)
+# Note: Enabling mouse support may interfere with terminal text selection
+# Disable this (false) to allow normal text selection with mouse
+enable = false
 `)
 
 	return err
@@ -416,6 +432,12 @@ bold = false
 text_editor = "nano"
 image_editor = "gimp"
 image_viewer = "loupe"
+
+[mouse]
+# Enable mouse support in the TUI (default: false)
+# Note: Enabling mouse support may interfere with terminal text selection
+# Disable this (false) to allow normal text selection with mouse
+enable = false
 
 [logging]
 level = "error"  # Options: debug, info, warn, error
