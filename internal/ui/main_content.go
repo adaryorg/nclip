@@ -29,7 +29,6 @@ import (
 	"strings"
 
 	"github.com/adaryorg/nclip/internal/storage"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // buildMainContent builds the content area for the main window with fixed layout
@@ -41,9 +40,8 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 	var content strings.Builder
 	linesRendered := 0
 
-	// Create styles
-	selectedStyle := m.createSelectedStyle(m.config.Theme.Selected)
-	statusStyle := m.createStyle(m.config.Theme.Status)
+	// Get main view styles from theme service
+	mainStyles := m.themeService.GetMainViewStyles()
 
 	if len(m.filteredItems) == 0 {
 		// Center "no items" message in the fixed content area
@@ -63,7 +61,7 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 			if msgPadding > 0 {
 				content.WriteString(strings.Repeat(" ", msgPadding))
 			}
-			content.WriteString(statusStyle.Render(noItemsMsg))
+			content.WriteString(mainStyles.Text.Render(noItemsMsg))
 			content.WriteString("\n")
 			linesRendered++
 		}
@@ -94,31 +92,32 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 		item := itemMeta.ToClipboardItem()
 		displayLines := m.getItemDisplayLines(item, contentWidth)
 
-		// Get security icons
-		coloredSecurityIcon := m.getSecurityIcon(item)
-		plainSecurityIcon := m.getPlainSecurityIcon(item)
-
 		// Render as many lines of this item as fit
 		for lineIndex, line := range displayLines {
 			if linesRendered >= availableContentLines {
 				break
 			}
 
-			displayLine := line
-			
-			// Handle security icon replacement for non-selected items
-			if itemIndex != m.cursor && lineIndex == 0 && plainSecurityIcon != "" && coloredSecurityIcon != "" {
-				if strings.HasPrefix(line, plainSecurityIcon+" ") {
-					displayLine = strings.Replace(line, plainSecurityIcon+" ", coloredSecurityIcon+" ", 1)
-				}
-			}
-
 			if itemIndex == m.cursor {
-				// Selected item uses selected style with padding
-				content.WriteString(selectedStyle.Render(" " + line + " "))
+				// Selected item - build plain text first, then apply uniform selected background
+				if lineIndex == 0 && (item.IsPinned || item.ThreatLevel != "none" || item.SafeEntry) {
+					// First line with icons - build plain text line, then apply selected background uniformly
+					plainLine := m.buildPlainLineWithIcons(item, line)
+					content.WriteString("  " + mainStyles.SelectedBackground.Render(plainLine))
+				} else {
+					// Other lines - apply selected background to plain text
+					content.WriteString("  " + mainStyles.SelectedBackground.Render(line))
+				}
 			} else {
-				// Non-selected items use colored icons
-				content.WriteString("  " + displayLine)
+				// Non-selected items
+				if lineIndex == 0 && (item.IsPinned || item.ThreatLevel != "none" || item.SafeEntry) {
+					// First line with icons - build properly styled line
+					styledLine := m.buildStyledLineWithIcons(item, line, mainStyles)
+					content.WriteString("  " + styledLine)
+				} else {
+					// Other lines - apply text styling
+					content.WriteString("  " + mainStyles.Text.Render(line))
+				}
 			}
 			content.WriteString("\n")
 			linesRendered++
@@ -130,8 +129,7 @@ func (m Model) buildMainContent(contentWidth, contentHeight int) string {
 			separatorWidth := contentWidth - 4 // Account for padding
 			if separatorWidth > 0 {
 				separator := strings.Repeat(separatorChar, separatorWidth)
-				separatorStyle := lipgloss.NewStyle().Foreground(m.parseColor("238")) // medium dark gray
-				content.WriteString("  " + separatorStyle.Render(separator))
+				content.WriteString("  " + mainStyles.HeaderSeparator.Render(separator))
 				content.WriteString("\n")
 				linesRendered++
 			}
@@ -210,24 +208,16 @@ func (m Model) getItemDisplayLines(item storage.ClipboardItem, availableWidth in
 		effectiveWidth = 20 // fallback
 	}
 
-	// Get plain security icon (without ANSI colors) for display line generation
-	plainSecurityIcon := m.getPlainSecurityIcon(item)
+	// Since icons are just Unicode characters, no special width calculation needed
+	// The line styling will be handled by buildStyledLineWithIcons
 	firstLineWidth := effectiveWidth
-	if plainSecurityIcon != "" {
-		firstLineWidth = effectiveWidth - 4 // Account for icon "[!] " or "[?] "
-		if firstLineWidth <= 0 {
-			firstLineWidth = 10 // fallback
-		}
-	}
 
 	// Handle image items differently
 	if item.ContentType == "image" {
 		// Show descriptive text line for images (Content already includes size info)
 		imageDesc := fmt.Sprintf("%s - Press 'v' to view, 'e' to edit", item.Content)
-		if plainSecurityIcon != "" {
-			imageDesc = plainSecurityIcon + " " + imageDesc
-		}
-		displayLines = wrapText(imageDesc, effectiveWidth, maxLines)
+		// Note: icons will be added later by buildStyledLineWithIcons
+		displayLines = wrapText(imageDesc, firstLineWidth, maxLines)
 	} else {
 		// Regular text content
 		if isMultiline {
@@ -240,25 +230,118 @@ func (m Model) getItemDisplayLines(item storage.ClipboardItem, availableWidth in
 					break
 				}
 
-				// Add plain security icon to first line only
+				// Icons will be added later by buildStyledLineWithIcons
 				lineContent := line
-				if j == 0 && plainSecurityIcon != "" {
-					lineContent = plainSecurityIcon + " " + line
-				}
 
 				// Wrap long lines within multiline entries
-				wrappedLines := wrapText(lineContent, effectiveWidth, maxLines-len(displayLines))
+				// Use smaller width for first line to account for icons that will be added later
+				wrapWidth := effectiveWidth
+				if j == 0 {
+					wrapWidth = firstLineWidth
+				}
+				wrappedLines := wrapText(lineContent, wrapWidth, maxLines-len(displayLines))
 				displayLines = append(displayLines, wrappedLines...)
 			}
 		} else {
 			// Single line entry - wrap to show full content up to 5 lines
-			contentWithIcon := item.Content
-			if plainSecurityIcon != "" {
-				contentWithIcon = plainSecurityIcon + " " + item.Content
-			}
-			displayLines = wrapText(contentWithIcon, effectiveWidth, maxLines)
+			// Icons will be added later by buildStyledLineWithIcons
+			displayLines = wrapText(item.Content, firstLineWidth, maxLines)
 		}
 	}
 
 	return displayLines
 }
+
+// buildStyledLineWithIcons builds a properly styled line with icons
+func (m Model) buildStyledLineWithIcons(item storage.ClipboardItem, line string, mainStyles MainViewStyles) string {
+	// Get the icons to use
+	pinIcon := ""
+	securityIcon := ""
+	
+	if item.IsPinned {
+		pinIcon = m.getThemedPinIcon(item)
+	}
+	
+	// Get security icon (includes safe marker)
+	securityIcon = m.getThemedSecurityIcon(item)
+	
+	// The line parameter now contains only text content (icons are added here)
+	textContent := line
+	
+	// Build the styled line by composing styled parts
+	var parts []string
+	
+	if pinIcon != "" {
+		parts = append(parts, pinIcon)
+	}
+	if securityIcon != "" {
+		parts = append(parts, securityIcon)
+	}
+	
+	// Add the text content with proper styling
+	styledText := mainStyles.Text.Render(textContent)
+	parts = append(parts, styledText)
+	
+	// Join with styled spaces that inherit the text background
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	
+	// Create a styled space using the text style for background consistency
+	styledSpace := mainStyles.Text.Render(" ")
+	return strings.Join(parts, styledSpace)
+}
+
+// buildPlainLineWithIcons builds a plain text line with icons for selected items
+func (m Model) buildPlainLineWithIcons(item storage.ClipboardItem, line string) string {
+	// Get plain icon text
+	var iconParts []string
+	
+	if item.IsPinned {
+		iconParts = append(iconParts, m.pinIconHelper.GetPinIcon(item.PinOrder))
+	}
+	
+	// Add security icon using the same logic as getThemedSecurityIcon
+	securityIcon := ""
+	
+	// Show safe marker if item has been marked as safe but has a threat level
+	if item.SafeEntry && item.ThreatLevel != "none" {
+		if m.iconHelper.GetCapabilities().SupportsUnicode {
+			securityIcon = "✓"
+		} else {
+			securityIcon = "[s]"
+		}
+	} else if item.SafeEntry {
+		// Don't show security warnings if item has been marked as safe with no threat
+		securityIcon = ""
+	} else {
+		// Use stored threat level for display
+		switch item.ThreatLevel {
+		case "high":
+			if m.iconHelper.GetCapabilities().SupportsUnicode {
+				securityIcon = "⚠"
+			} else {
+				securityIcon = "[h]"
+			}
+		case "medium":
+			if m.iconHelper.GetCapabilities().SupportsUnicode {
+				securityIcon = "⚡"
+			} else {
+				securityIcon = "[m]"
+			}
+		default:
+			securityIcon = ""
+		}
+	}
+	
+	if securityIcon != "" {
+		iconParts = append(iconParts, securityIcon)
+	}
+	
+	// Build plain text line
+	if len(iconParts) > 0 {
+		return strings.Join(iconParts, " ") + " " + line
+	}
+	return line
+}
+

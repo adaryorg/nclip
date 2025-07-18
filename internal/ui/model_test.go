@@ -580,9 +580,11 @@ func TestDetectTerminalCapabilities(t *testing.T) {
 	// Save original environment
 	originalTerm := os.Getenv("TERM")
 	originalColorTerm := os.Getenv("COLORTERM")
+	originalXDG := os.Getenv("XDG_SESSION_TYPE")
 	defer func() {
 		os.Setenv("TERM", originalTerm)
 		os.Setenv("COLORTERM", originalColorTerm)
+		os.Setenv("XDG_SESSION_TYPE", originalXDG)
 	}()
 
 	tests := []struct {
@@ -590,11 +592,12 @@ func TestDetectTerminalCapabilities(t *testing.T) {
 		colorTerm string
 		expected  bool
 	}{
-		// Basic terminals should return false
-		{"xterm", "", false},
-		{"screen", "", false},
-		{"linux", "", false},
-		{"vt100", "", false},
+		// In the new simplified logic, all terminals support color by default
+		// unless they are TTY (which is checked via XDG_SESSION_TYPE)
+		{"xterm", "", true},
+		{"screen", "", true},
+		{"linux", "", true},
+		{"vt100", "", true},
 		
 		// Advanced terminals should return true
 		{"xterm-256color", "", true},
@@ -602,7 +605,7 @@ func TestDetectTerminalCapabilities(t *testing.T) {
 		{"alacritty", "", true},
 		{"kitty", "", true},
 		
-		// COLORTERM override should work
+		// COLORTERM is ignored in the new logic
 		{"xterm", "truecolor", true},
 		{"linux", "24bit", true},
 		
@@ -618,18 +621,20 @@ func TestDetectTerminalCapabilities(t *testing.T) {
 			os.Setenv("COLORTERM", test.colorTerm)
 		}
 		
-		// Also unset modern terminal indicators to ensure clean test
-		os.Unsetenv("ITERM_SESSION_ID")
-		os.Unsetenv("KITTY_WINDOW_ID")
-		os.Unsetenv("ALACRITTY_SOCKET")
-		os.Unsetenv("WEZTERM_PANE")
-		os.Unsetenv("GHOSTTY_RESOURCES_DIR")
-		os.Unsetenv("COLORS")
+		// Clear XDG_SESSION_TYPE to avoid TTY detection
+		os.Unsetenv("XDG_SESSION_TYPE")
 		
-		result := detectTerminalCapabilities()
-		if result != test.expected {
-			t.Errorf("detectTerminalCapabilities() with TERM=%s COLORTERM=%s = %v, expected %v", 
-				test.term, test.colorTerm, result, test.expected)
+		// Test both basic terminal modes
+		capabilities := DetectTerminalCapabilities(false)
+		if capabilities.SupportsColor != test.expected {
+			t.Errorf("DetectTerminalCapabilities(false) with TERM=%s COLORTERM=%s SupportsColor = %v, expected %v", 
+				test.term, test.colorTerm, capabilities.SupportsColor, test.expected)
+		}
+		
+		// Basic terminal mode should always return false for colors
+		basicCapabilities := DetectTerminalCapabilities(true)
+		if basicCapabilities.SupportsColor != false {
+			t.Errorf("DetectTerminalCapabilities(true) SupportsColor = %v, expected false", basicCapabilities.SupportsColor)
 		}
 	}
 }

@@ -605,3 +605,42 @@ func TestItemCache_ConcurrentAccess(t *testing.T) {
 		t.Errorf("Expected 5 total items after concurrent access, got %v", totalItems)
 	}
 }
+
+func TestItemCache_ForceRefresh(t *testing.T) {
+	storage, _ := createTestStorageForCache(t)
+	cache := NewItemCache(storage, 5)
+
+	// Add initial item
+	err := storage.Add("initial content")
+	if err != nil {
+		t.Fatalf("Failed to add initial item: %v", err)
+	}
+
+	// Cache should not see the new item without refresh
+	items := cache.GetAllMeta()
+	if len(items) != 0 {
+		t.Errorf("Expected 0 items in cache before refresh, got %d", len(items))
+	}
+
+	// Force refresh should pick up new item
+	cache.ForceRefresh()
+	items = cache.GetAllMeta()
+	if len(items) != 1 {
+		t.Errorf("Expected 1 item in cache after force refresh, got %d", len(items))
+	}
+	if items[0].Content != "initial content" {
+		t.Errorf("Expected content 'initial content', got '%s'", items[0].Content)
+	}
+
+	// Add another item and force refresh again
+	err = storage.Add("second content")
+	if err != nil {
+		t.Fatalf("Failed to add second item: %v", err)
+	}
+
+	cache.ForceRefresh()
+	items = cache.GetAllMeta()
+	if len(items) != 2 {
+		t.Errorf("Expected 2 items in cache after second force refresh, got %d", len(items))
+	}
+}

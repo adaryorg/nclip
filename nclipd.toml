@@ -2,4 +2,17 @@
 max_entries = 1000
 
 [logging]
-level = "error"  # Options: debug, info, warn, error
+level = "info"                             # Options: debug, info, warn, error
+log_file = "~/.local/log/nclipd.log"       # Log file location
+max_age_days = 10                          # Maximum age of log files in days
+max_size_mb = 10                           # Maximum size of each log file in MB
+max_backups = 10                           # Number of backup log files to keep
+
+[maintenance]
+# Automatic database maintenance tasks
+auto_dedupe = true               # Enable automatic deduplication
+dedupe_interval_minutes = 10     # Run deduplication every 10 minutes
+auto_prune = true                # Enable automatic pruning
+prune_interval_minutes = 60      # Run pruning every 60 minutes
+prune_empty_data = true          # Remove entries with no data
+prune_single_char = true         # Remove entries with single character data

@@ -242,6 +242,13 @@ func TestLooksLikePassword(t *testing.T) {
 		{"Abc12345", true},                // Has 3 types (upper, lower, digit)
 		{"abc!@#$%", false},               // Only 2 types (lower, special)
 		{"Abc!@#$%", true},                // Has 3 types (upper, lower, special)
+		{"MySecure123!", true},            // Has all 4 types
+		{"Complex9*", true},               // Has all 4 types
+		{"Test with space", false},        // Contains space
+		{"Test\nNewline", false},          // Contains newline
+		{"VeryLongPasswordThatExceedsTheFortyFiveCharacterLimit123!", false}, // Too long (>40 chars)
+		{"Short7!", false},                // Too short (8 chars minimum)
+		{"Perfect8!", true},               // Exactly 8 chars with all types
 	}
 
 	for _, test := range tests {
@@ -285,20 +292,77 @@ func TestIsRandomToken(t *testing.T) {
 		input    string
 		expected bool
 	}{
-		{"abcdefghijklmnopqrstuvwxyz", true}, // Long alphanumeric
-		{"abc123def456ghi789jkl", true},      // Mixed alphanumeric
-		{"token_with_underscores_123", true}, // With underscores
-		{"token-with-dashes-456", true},      // With dashes
-		{"short", false},                     // Too short
-		{strings.Repeat("a", 600), false},    // Too long
-		{"hello world test", false},          // Has spaces
-		{"token@#$%^&*()+=", false},          // Too many special chars
+		{"abcdefghijklmnopqrstuvwxyz123456", true}, // Long alphanumeric (32 chars)
+		{"abc123def456ghi789jkl012345678901", true}, // Mixed alphanumeric (32 chars)
+		{"token_with_underscores_123456789012", true}, // With underscores (32 chars)
+		{"token-with-dashes-456789012345678", true}, // With dashes (32 chars)
+		{strings.Repeat("a", 32), true},             // Exactly 32 chars
+		{strings.Repeat("a", 256), true},            // Exactly 256 chars
+		{"abcdefghijklmnopqrstuvwxyz", false},       // Too short (26 chars)
+		{"abc123def456ghi789jkl", false},            // Too short (22 chars)
+		{"token_with_underscores_123", false},       // Too short (28 chars)
+		{"token-with-dashes-456", false},            // Too short (23 chars)
+		{"short", false},                            // Too short
+		{strings.Repeat("a", 600), false},           // Too long
+		{"hello world test" + strings.Repeat("a", 20), false}, // Has spaces
+		{"token@#$%^&*()+=abcdefghijklmnop", false}, // Too many special chars
+		{"validtoken123" + strings.Repeat("a", 20), true}, // Valid token
+		{"token with space" + strings.Repeat("a", 15), false}, // Contains space
+		{"token\nwith\nnewline" + strings.Repeat("a", 10), false}, // Contains newline
 	}
 
 	for _, test := range tests {
 		result := detector.isRandomToken(test.input)
 		if result != test.expected {
 			t.Errorf("isRandomToken('%s') = %v, expected %v", test.input, result, test.expected)
+		}
+	}
+}
+
+func TestIsUnsafeURL(t *testing.T) {
+	detector := NewSecurityDetector()
+
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		// Safe URLs (no query parameters)
+		{"https://example.com", false},
+		{"https://example.com/page", false},
+		{"https://example.com/page/subpage", false},
+		{"http://example.com", false},
+		{"https://api.example.com/v1/users", false},
+		
+		// URLs with single parameter (no &)
+		{"https://example.com?page=1", false},
+		{"https://example.com?search=test", false},
+		
+		// Unsafe URLs (with query parameters containing &)
+		{"https://example.com?page=1&limit=10", true},
+		{"https://api.example.com/v1/data?token=abc123&format=json", true},
+		{"https://example.com?api_key=secret&user=admin", true},
+		{"https://oauth.example.com?access_token=xyz789&refresh_token=abc123", true},
+		{"https://example.com?session=abc&csrf=def", true},
+		
+		// URLs with suspicious parameter names
+		{"https://api.example.com?token=abc123&other=value", true},
+		{"https://example.com?access_token=secret&page=1", true},
+		{"https://example.com?api_key=key123&format=json", true},
+		{"https://example.com?password=secret&user=admin", true},
+		{"https://example.com?auth=bearer123&action=login", true},
+		
+		// Invalid cases
+		{"ftp://example.com?token=abc&other=def", false},    // Wrong scheme
+		{"https://example.com?token=abc other=def", false},  // Contains space
+		{"https://example.com?token=abc\nother=def", false}, // Contains newline
+		{"not a url", false},                                // Not a URL
+		{"", false},                                         // Empty string
+	}
+
+	for _, test := range tests {
+		result := detector.isUnsafeURL(test.input)
+		if result != test.expected {
+			t.Errorf("isUnsafeURL('%s') = %v, expected %v", test.input, result, test.expected)
 		}
 	}
 }

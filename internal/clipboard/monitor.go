@@ -61,11 +61,10 @@ type Monitor struct {
 	hashStore        *security.HashStore
 	useWayland       bool
 	
-	// Debouncing fields
-	debounceBuffer   string
-	debounceTimer    *time.Timer
-	debounceTimeout  time.Duration
-	lastChangeTime   time.Time
+	// Anti-bump fields
+	pendingContent   string
+	stabilizeTimer   *time.Timer
+	stabilizeTimeout time.Duration
 }
 
 func NewMonitor(callback func(string)) *Monitor {
@@ -73,12 +72,12 @@ func NewMonitor(callback func(string)) *Monitor {
 	hashStore, _ := security.NewHashStore() // Ignore error, will be nil if failed
 
 	return &Monitor{
-		interval:        500 * time.Millisecond,
-		textCallback:    callback,
-		detector:        detector,
-		hashStore:       hashStore,
-		useWayland:      isWaylandSession(),
-		debounceTimeout: 500 * time.Millisecond, // 500ms debounce for text selection
+		interval:         500 * time.Millisecond,
+		textCallback:     callback,
+		detector:         detector,
+		hashStore:        hashStore,
+		useWayland:       isWaylandSession(),
+		stabilizeTimeout: 500 * time.Millisecond, // Wait 500ms for selection to stabilize
 	}
 }
 
@@ -87,13 +86,13 @@ func NewMonitorWithImage(textCallback ContentCallback, imageCallback ImageCallba
 	hashStore, _ := security.NewHashStore() // Ignore error, will be nil if failed
 
 	return &Monitor{
-		interval:        500 * time.Millisecond,
-		textCallback:    textCallback,
-		imageCallback:   imageCallback,
-		detector:        detector,
-		hashStore:       hashStore,
-		useWayland:      isWaylandSession(),
-		debounceTimeout: 500 * time.Millisecond, // 500ms debounce for text selection
+		interval:         500 * time.Millisecond,
+		textCallback:     textCallback,
+		imageCallback:    imageCallback,
+		detector:         detector,
+		hashStore:        hashStore,
+		useWayland:       isWaylandSession(),
+		stabilizeTimeout: 500 * time.Millisecond, // Wait 500ms for selection to stabilize
 	}
 }
 
@@ -109,7 +108,7 @@ func NewMonitorWithSecurity(textCallback ContentCallback, imageCallback ImageCal
 		detector:         detector,
 		hashStore:        hashStore,
 		useWayland:       isWaylandSession(),
-		debounceTimeout:  500 * time.Millisecond, // 500ms debounce for text selection
+		stabilizeTimeout: 500 * time.Millisecond, // Wait 500ms for selection to stabilize
 	}
 }
 
@@ -154,8 +153,8 @@ func (m *Monitor) startWaylandMonitor(ctx context.Context) error {
 			}
 			
 			if content != "" && content != m.lastContent {
-				m.lastContent = content
 				m.handleClipboardChange(content)
+				m.lastContent = content
 			}
 
 			// Monitor image content if callback is set
@@ -206,8 +205,8 @@ func (m *Monitor) startPollingMonitor(ctx context.Context) error {
 			}
 			
 			if content != "" && content != m.lastContent {
-				m.lastContent = content
 				m.handleClipboardChange(content)
+				m.lastContent = content
 			}
 
 			// Monitor image content if callback is set
@@ -239,79 +238,69 @@ func (m *Monitor) startPollingMonitor(ctx context.Context) error {
 }
 
 func (m *Monitor) handleClipboardChange(content string) {
-	now := time.Now()
-	
-	// Check if this is part of a rapid selection sequence
-	if m.isSubstringExpansion(content) || m.isRapidChange(now) {
-		// This looks like progressive text selection - start/reset debounce timer
-		m.debounceBuffer = content
-		m.lastChangeTime = now
+	// Check if this content is a substring expansion of the last content
+	if m.isSubstringExpansion(content) {
+		logging.Debug("Substring expansion detected - starting stabilize timer: len=%d, content=%s...", 
+			len(content), m.truncateForLog(content))
+		
+		// Store the content as pending and start/reset stabilization timer
+		m.pendingContent = content
 		
 		// Cancel existing timer if any
-		if m.debounceTimer != nil {
-			m.debounceTimer.Stop()
+		if m.stabilizeTimer != nil {
+			m.stabilizeTimer.Stop()
 		}
 		
-		// Start new debounce timer
-		m.debounceTimer = time.AfterFunc(m.debounceTimeout, func() {
-			// Timer expired, process the final content
-			m.processClipboardContent(m.debounceBuffer)
+		// Start stabilization timer
+		m.stabilizeTimer = time.AfterFunc(m.stabilizeTimeout, func() {
+			// Timer expired, store the final stabilized content
+			logging.Debug("Selection stabilized, storing final content: len=%d, content=%s...", 
+				len(m.pendingContent), m.truncateForLog(m.pendingContent))
+			m.processClipboardContent(m.pendingContent)
+			m.pendingContent = ""
 		})
-		
-		logging.Debug("Debouncing clipboard change (len=%d): %s...", len(content), m.truncateForLog(content))
 		return
 	}
-
-	// Not a substring expansion - cancel any pending timer and process immediately
-	if m.debounceTimer != nil {
-		m.debounceTimer.Stop()
-		m.debounceTimer = nil
+	
+	// This is new content (not a substring expansion)
+	// Cancel any pending stabilization and store immediately
+	if m.stabilizeTimer != nil {
+		logging.Debug("Canceling stabilization timer, storing new content immediately")
+		m.stabilizeTimer.Stop()
+		m.stabilizeTimer = nil
+		m.pendingContent = ""
 	}
 	
-	m.debounceBuffer = ""
-	m.lastChangeTime = now
+	logging.Debug("Storing new clipboard content: len=%d, content=%s...", 
+		len(content), m.truncateForLog(content))
 	m.processClipboardContent(content)
 }
 
 func (m *Monitor) isSubstringExpansion(newContent string) bool {
-	// If we have a debounce buffer, check if new content contains the buffer as substring
-	if m.debounceBuffer != "" {
-		// Check if the previous content is a substring of the new content
-		// This handles cases like: "nd" -> "found" -> "not found" -> ".service not found"
-		if strings.Contains(newContent, m.debounceBuffer) && len(newContent) > len(m.debounceBuffer) {
-			return true
-		}
-		
-		// Also check the reverse case (new content is substring of buffer)
-		// This handles cases where selection goes backwards
-		if strings.Contains(m.debounceBuffer, newContent) && len(m.debounceBuffer) > len(newContent) {
-			return true
-		}
+	// Only check against last processed content
+	if m.lastContent == "" {
+		return false
 	}
 	
-	// Also check against last processed content for initial detection
-	if m.lastContent != "" {
-		// Check if the previous content is a substring of the new content
-		if strings.Contains(newContent, m.lastContent) && len(newContent) > len(m.lastContent) {
-			return true
-		}
-		
-		// Also check the reverse case
-		if strings.Contains(m.lastContent, newContent) && len(m.lastContent) > len(newContent) {
-			return true
-		}
+	// Check if the previous content is a substring of the new content
+	// This handles expanding selections: "test" -> "test debug" -> "test debug logging"
+	if strings.Contains(newContent, m.lastContent) && len(newContent) > len(m.lastContent) {
+		logging.Debug("Substring expansion detected: %q expanded to %q", 
+			m.truncateForLog(m.lastContent), m.truncateForLog(newContent))
+		return true
+	}
+	
+	// Check the reverse case - new content is substring of previous content  
+	// This handles shrinking selections: "test debug logging" -> "test debug" -> "test"
+	if strings.Contains(m.lastContent, newContent) && len(m.lastContent) > len(newContent) {
+		logging.Debug("Substring contraction detected: %q contracted to %q", 
+			m.truncateForLog(m.lastContent), m.truncateForLog(newContent))
+		return true
 	}
 	
 	return false
 }
 
-func (m *Monitor) isRapidChange(now time.Time) bool {
-	// Consider it a rapid change if it's within 200ms of the last change
-	if !m.lastChangeTime.IsZero() {
-		return now.Sub(m.lastChangeTime) < 200*time.Millisecond
-	}
-	return false
-}
 
 func (m *Monitor) truncateForLog(content string) string {
 	const maxLen = 50
@@ -486,10 +475,10 @@ func copyImageX11(imageData []byte) error {
 
 // Close cleans up resources used by the monitor
 func (m *Monitor) Close() error {
-	// Cancel any pending debounce timer
-	if m.debounceTimer != nil {
-		m.debounceTimer.Stop()
-		m.debounceTimer = nil
+	// Cancel any pending stabilization timer
+	if m.stabilizeTimer != nil {
+		m.stabilizeTimer.Stop()
+		m.stabilizeTimer = nil
 	}
 	
 	if m.hashStore != nil {

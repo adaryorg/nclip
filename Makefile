@@ -21,9 +21,17 @@ clean:
 # Build both binaries
 build:
 	@echo "Building nclip (TUI)..."
-	go build -o nclip ./cmd
+	go build -ldflags "\
+		-X github.com/adaryorg/nclip/internal/version.BuildTime=$(shell date +'%Y-%m-%d.%H:%M:%S') \
+		-X github.com/adaryorg/nclip/internal/version.CommitHash=$(shell git log --pretty=format:'%h' -n 1) \
+		-X github.com/adaryorg/nclip/internal/version.Version=$(shell git describe --tags 2>/dev/null || echo 'dev')" \
+		-o nclip ./cmd
 	@echo "Building nclipd (daemon)..."
-	go build -o nclipd ./cmd/nclipd
+	go build -ldflags "\
+		-X github.com/adaryorg/nclip/internal/version.BuildTime=$(shell date +'%Y-%m-%d.%H:%M:%S') \
+		-X github.com/adaryorg/nclip/internal/version.CommitHash=$(shell git log --pretty=format:'%h' -n 1) \
+		-X github.com/adaryorg/nclip/internal/version.Version=$(shell git describe --tags 2>/dev/null || echo 'dev')" \
+		-o nclipd ./cmd/nclipd
 	@echo "Build complete."
 
 # Install binaries and manage daemon service

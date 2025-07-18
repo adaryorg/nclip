@@ -34,8 +34,8 @@ import (
 	"github.com/adaryorg/nclip/internal/ui"
 )
 
-func startTUI(store *storage.Storage, cfg *config.Config) {
-	model := ui.NewModel(store, cfg)
+func startTUI(store *storage.Storage, cfg *config.Config, basicTerminal bool) {
+	model := ui.NewModel(store, cfg, basicTerminal)
 
 	// Configure program options based on configuration
 	options := []tea.ProgramOption{tea.WithAltScreen()}

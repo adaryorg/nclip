@@ -202,6 +202,89 @@ func main() {
 	}
 }
 
+func TestCodeDetector_HighlightCodeWithTheme(t *testing.T) {
+	detector := NewCodeDetector()
+	goCode := `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello, World!")
+}
+`
+
+	tests := []struct {
+		name        string
+		content     string
+		language    string
+		basicColors bool
+		themeName   string
+		expectError bool
+	}{
+		{
+			name:        "Go code with catppuccin-mocha theme",
+			content:     goCode,
+			language:    "go",
+			basicColors: false,
+			themeName:   "catppuccin-mocha",
+			expectError: false,
+		},
+		{
+			name:        "Go code with catppuccin-latte theme",
+			content:     goCode,
+			language:    "go",
+			basicColors: false,
+			themeName:   "catppuccin-latte",
+			expectError: false,
+		},
+		{
+			name:        "Go code with invalid theme",
+			content:     goCode,
+			language:    "go",
+			basicColors: false,
+			themeName:   "invalid-theme",
+			expectError: false, // Should fallback to default
+		},
+		{
+			name:        "Go code with empty theme",
+			content:     goCode,
+			language:    "go",
+			basicColors: false,
+			themeName:   "",
+			expectError: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			lines, err := detector.HighlightCodeWithTheme(test.content, test.language, test.basicColors, test.themeName)
+			
+			if test.expectError && err == nil {
+				t.Errorf("Expected error but got none")
+			}
+			if !test.expectError && err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+			}
+			if len(lines) == 0 {
+				t.Errorf("Expected highlighted lines but got none")
+			}
+			
+			// Check that we got syntax highlighting (should contain ANSI codes)
+			hasAnsiCodes := false
+			for _, line := range lines {
+				if strings.Contains(line, "\x1b[") {
+					hasAnsiCodes = true
+					break
+				}
+			}
+			
+			if !test.basicColors && !hasAnsiCodes {
+				t.Errorf("Expected ANSI color codes in highlighted output")
+			}
+		})
+	}
+}
+
 func TestCodeDetector_detectByContent(t *testing.T) {
 	detector := NewCodeDetector()
 

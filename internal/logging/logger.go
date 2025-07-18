@@ -25,73 +25,112 @@ SOFTWARE.
 package logging
 
 import (
-	"log"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-type Level int
+var globalLogger zerolog.Logger
 
-const (
-	DEBUG Level = iota
-	INFO
-	WARN
-	ERROR
-)
-
-var (
-	currentLevel Level = ERROR
-	levelNames = map[Level]string{
-		DEBUG: "DEBUG",
-		INFO:  "INFO",
-		WARN:  "WARN",
-		ERROR: "ERROR",
+// InitLogger sets up logging with file rotation and dual output (file + stdout/stderr)
+func InitLogger(logFile string, level string, maxAge, maxSize, maxBackups int) error {
+	// Expand ~ to home directory if present
+	if strings.HasPrefix(logFile, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		logFile = filepath.Join(homeDir, logFile[2:])
 	}
-)
 
-func SetLevel(level string) {
-	switch strings.ToLower(level) {
-	case "debug":
-		currentLevel = DEBUG
-	case "info":
-		currentLevel = INFO
-	case "warn", "warning":
-		currentLevel = WARN
-	case "error":
-		currentLevel = ERROR
-	default:
-		currentLevel = ERROR
+	// Ensure log directory exists
+	logDir := filepath.Dir(logFile)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return err
 	}
+
+	// Parse log level
+	logLevel, err := zerolog.ParseLevel(level)
+	if err != nil {
+		logLevel = zerolog.InfoLevel // Default to info if invalid level
+	}
+
+	// Set up lumberjack for log rotation
+	fileWriter := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    maxSize,    // MB
+		MaxAge:     maxAge,     // days
+		MaxBackups: maxBackups, // number of backups
+		LocalTime:  true,
+		Compress:   true, // compress old log files
+	}
+
+	// Create console writer for stdout/stderr
+	consoleWriter := zerolog.ConsoleWriter{
+		Out:        os.Stdout,
+		TimeFormat: "2006-01-02 15:04:05",
+		NoColor:    false,
+	}
+
+	// Set up multi-writer to write to both file and console
+	multiWriter := io.MultiWriter(fileWriter, consoleWriter)
+
+	// Configure global logger
+	globalLogger = zerolog.New(multiWriter).
+		Level(logLevel).
+		With().
+		Timestamp().
+		Caller().
+		Logger()
+
+	// Also set the global zerolog logger
+	log.Logger = globalLogger
+
+	return nil
 }
 
-func GetLevel() string {
-	return strings.ToLower(levelNames[currentLevel])
-}
-
-func shouldLog(level Level) bool {
-	return level >= currentLevel
-}
-
+// Debug logs a debug message
 func Debug(format string, args ...interface{}) {
-	if shouldLog(DEBUG) {
-		log.Printf("DEBUG: "+format, args...)
-	}
+	globalLogger.Debug().Msgf(format, args...)
 }
 
+// Info logs an info message
 func Info(format string, args ...interface{}) {
-	if shouldLog(INFO) {
-		log.Printf("INFO: "+format, args...)
-	}
+	globalLogger.Info().Msgf(format, args...)
 }
 
+// Warn logs a warning message
 func Warn(format string, args ...interface{}) {
-	if shouldLog(WARN) {
-		log.Printf("WARN: "+format, args...)
-	}
+	globalLogger.Warn().Msgf(format, args...)
 }
 
+// Error logs an error message
 func Error(format string, args ...interface{}) {
-	if shouldLog(ERROR) {
-		log.Printf("ERROR: "+format, args...)
+	globalLogger.Error().Msgf(format, args...)
+}
+
+// Fatal logs a fatal message and exits
+func Fatal(format string, args ...interface{}) {
+	globalLogger.Fatal().Msgf(format, args...)
+}
+
+// SetLevel changes the logging level (legacy compatibility)
+func SetLevel(level string) {
+	logLevel, err := zerolog.ParseLevel(level)
+	if err != nil {
+		logLevel = zerolog.InfoLevel
 	}
+	globalLogger = globalLogger.Level(logLevel)
+	log.Logger = globalLogger
+}
+
+// GetLogger returns the configured logger instance
+func GetLogger() zerolog.Logger {
+	return globalLogger
 }
 

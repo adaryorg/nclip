@@ -1,0 +1,254 @@
+# Catppuccin Macchiato Theme for NClip
+# Based on the Catppuccin Macchiato color palette
+# https://github.com/catppuccin/catppuccin
+#
+# Colors used:
+# Base: #24273a (dark background)
+# Text: #cad3f5 (light text)
+# Subtext1: #b8c0e0 (secondary text)
+# Subtext0: #a5adcb (tertiary text)
+# Overlay0: #6e738d (borders/separators)
+# Surface0: #363a4f (elevated surfaces)
+# Mauve: #c6a0f6 (purple - primary accent)
+# Red: #ed8796 (high risk)
+# Peach: #f5a97f (medium risk)
+# Green: #a6da95 (safe/success)
+# Yellow: #eed49f (warnings/pins)
+# Blue: #8aadf4 (info/actions)
+# Lavender: #b7bdf8 (highlights)
+# Teal: #8bd5ca (distinct accent)
+
+# Main view theme
+[main]
+
+[main.border]
+foreground = "#f5a97f"  # Peach - borders
+background = ""
+bold = false
+
+[main.header]
+foreground = "#c6a0f6"  # Mauve - header text
+background = ""
+bold = true
+
+[main.header_separator]
+foreground = "#494d64"  # Surface1 - separators
+background = ""
+bold = false
+
+[main.text]
+foreground = "#cad3f5"  # Text - primary text
+background = ""
+bold = false
+
+[main.highlighted_text]
+foreground = "#b7bdf8"  # Lavender - search highlights
+background = ""
+bold = true
+
+[main.pinned_indicator]
+foreground = "#eed49f"  # Yellow - warm accent for pins
+background = ""
+bold = true
+
+[main.high_risk_indicator]
+foreground = "#ed8796"  # Red - danger/high risk
+background = ""
+bold = true
+
+[main.medium_risk_indicator]
+foreground = "#f5a97f"  # Peach - warning/medium risk
+background = ""
+bold = true
+
+[main.footer_separator]
+foreground = "#6e738d"  # Overlay0 - subtle separators
+background = ""
+bold = false
+
+[main.footer_key]
+foreground = "#91d7e3"  # Sky - key names
+background = ""
+bold = true
+
+[main.footer_action]
+foreground = "#8aadf4"  # Blue - action descriptions
+background = ""
+bold = false
+
+[main.footer_divider]
+foreground = "#ee99a0"  # Maroon - dividers
+background = ""
+bold = false
+
+[main.filter_indicator]
+foreground = "#b7bdf8"  # Lavender - filter indicators
+background = ""
+bold = true
+
+[main.normal_background]
+foreground = ""
+background = ""
+bold = false
+
+[main.alternate_background]
+foreground = ""
+background = ""
+bold = false
+
+[main.selected_background]
+foreground = "#24273a"  # Base - dark text on light background
+background = "#c6a0f6"  # Mauve - primary accent
+bold = false
+
+[main.global_background]
+foreground = ""
+background = "#181926"  # Crust - darkest background
+bold = false
+
+# Text view overrides
+[text_view.header]
+foreground = "#8aadf4"  # Blue - info color for text files
+background = ""
+bold = true
+
+[text_view.header_info]
+foreground = "#a5adcb"  # Subtext0 - file metadata
+background = ""
+bold = false
+
+[text_view.header_risk]
+foreground = "#ed8796"  # Red - security warnings
+background = ""
+bold = true
+
+# Image view overrides
+[image_view.header]
+foreground = "#8bd5ca"  # Teal - distinct color for images
+background = ""
+bold = true
+
+[image_view.image_info]
+foreground = "#a5adcb"  # Subtext0 - image metadata
+background = ""
+bold = false
+
+# Image unsupported view overrides
+[image_unsupported.header]
+foreground = "#ed8796"  # Red - error state
+background = ""
+bold = true
+
+[image_unsupported.actions]
+foreground = "#8aadf4"  # Blue - available actions
+background = ""
+bold = false
+
+# Code syntax highlighting theme
+[code_highlight]
+
+[code_highlight.keyword]
+foreground = "#c6a0f6"  # Mauve - keywords (if, for, class)
+background = ""
+bold = true
+
+[code_highlight.string]
+foreground = "#a6da95"  # Green - strings
+background = ""
+bold = false
+
+[code_highlight.comment]
+foreground = "#6e738d"  # Overlay0 - comments
+background = ""
+bold = false
+
+[code_highlight.number]
+foreground = "#f5a97f"  # Peach - numbers
+background = ""
+bold = false
+
+[code_highlight.function]
+foreground = "#8aadf4"  # Blue - functions
+background = ""
+bold = false
+
+[code_highlight.type]
+foreground = "#eed49f"  # Yellow - types
+background = ""
+bold = false
+
+[code_highlight.operator]
+foreground = "#91d7e3"  # Sky - operators
+background = ""
+bold = false
+
+# Scanning warning theme
+[scanning_warning.border]
+foreground = "#ed8796"  # Red - warning border
+background = ""
+bold = true
+
+[scanning_warning.title]
+foreground = "#ed8796"  # Red - warning title
+background = ""
+bold = true
+
+[scanning_warning.body]
+foreground = "#cad3f5"  # Text - warning body
+background = ""
+bold = false
+
+[scanning_warning.prompt]
+foreground = "#b8c0e0"  # Subtext1 - prompt text
+background = ""
+bold = false
+
+# Chroma syntax highlighting configuration
+[chroma]
+theme = "catppuccin-macchiato"
+
+# Legacy theme fields (kept for backward compatibility)
+[header]
+foreground = "#cad3f5"  # Text
+background = ""
+bold = true
+
+[status]
+foreground = "#b8c0e0"  # Subtext1
+background = ""
+bold = false
+
+[search]
+foreground = "#b7bdf8"  # Lavender
+background = ""
+bold = true
+
+[warning]
+foreground = "#ed8796"  # Red
+background = ""
+bold = true
+
+[selected]
+foreground = "#24273a"  # Base - dark text on light background
+background = "#c6a0f6"  # Mauve - primary accent
+bold = false
+
+[alternate_background]
+foreground = ""
+background = ""
+bold = false
+
+[normal_background]
+foreground = ""
+background = ""
+bold = false
+
+[frame.border]
+foreground = "#6e738d"  # Overlay0
+background = ""
+bold = false
+
+[frame.background]
+foreground = ""
+background = ""
+bold = false

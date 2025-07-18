@@ -1,0 +1,244 @@
+# Gruvbox Light Theme for NClip
+# Based on the Gruvbox color palette by morhetz
+# https://github.com/morhetz/gruvbox
+#
+# Color palette:
+# Background: light0 (#fbf1c7), light1 (#ebdbb2), light2 (#d5c4a1)
+# Foreground: dark1 (#3c3836), dark2 (#504945), dark3 (#665c54)
+# Accent colors: red (#cc241d), green (#98971a), yellow (#d79921),
+#                blue (#458588), purple (#b16286), aqua (#689d6a), orange (#d65d0e)
+
+# Main view theme
+[main]
+
+[main.border]
+foreground = "#d65d0e"    # Orange - warm accent for borders
+background = ""
+bold = false
+
+[main.header]
+foreground = "#d79921"    # Yellow - bright header text
+background = ""
+bold = true
+
+[main.header_separator]
+foreground = "#d5c4a1"    # Light2 - subtle separators
+background = ""
+bold = false
+
+[main.text]
+foreground = "#3c3836"    # Dark1 - primary text
+background = ""
+bold = false
+
+[main.highlighted_text]
+foreground = "#458588"    # Blue - search highlights
+background = ""
+bold = true
+
+[main.pinned_indicator]
+foreground = "#d79921"    # Yellow - warm accent for pins
+background = ""
+bold = true
+
+[main.high_risk_indicator]
+foreground = "#cc241d"    # Red - danger/high risk
+background = ""
+bold = true
+
+[main.medium_risk_indicator]
+foreground = "#d65d0e"    # Orange - warning/medium risk
+background = ""
+bold = true
+
+[main.footer_separator]
+foreground = "#d5c4a1"    # Light2 - subtle separators
+background = ""
+bold = false
+
+[main.footer_key]
+foreground = "#689d6a"    # Aqua - key names
+background = ""
+bold = true
+
+[main.footer_action]
+foreground = "#458588"    # Blue - action descriptions
+background = ""
+bold = false
+
+[main.footer_divider]
+foreground = "#b16286"    # Purple - dividers
+background = ""
+bold = false
+
+[main.filter_indicator]
+foreground = "#458588"    # Blue - filter indicators
+background = ""
+bold = true
+
+[main.normal_background]
+foreground = ""
+background = ""
+bold = false
+
+[main.alternate_background]
+foreground = ""
+background = ""
+bold = false
+
+[main.selected_background]
+foreground = "#fbf1c7"    # Light0 - light text on dark background
+background = "#d79921"    # Yellow - warm selection
+bold = false
+
+[main.global_background]
+foreground = ""
+background = "#f9f5d7"    # Light0_hard - lightest background
+bold = false
+
+# Text view overrides
+[text_view.header]
+foreground = "#458588"    # Blue - info color for text files
+background = ""
+bold = true
+
+[text_view.header_info]
+foreground = "#665c54"    # Dark3 - file metadata
+background = ""
+bold = false
+
+[text_view.header_risk]
+foreground = "#cc241d"    # Red - security warnings
+background = ""
+bold = true
+
+# Image view overrides
+[image_view.header]
+foreground = "#689d6a"    # Aqua - distinct color for images
+background = ""
+bold = true
+
+[image_view.image_info]
+foreground = "#665c54"    # Dark3 - image metadata
+background = ""
+bold = false
+
+# Image unsupported view overrides
+[image_unsupported.header]
+foreground = "#cc241d"    # Red - error state
+background = ""
+bold = true
+
+[image_unsupported.actions]
+foreground = "#458588"    # Blue - available actions
+background = ""
+bold = false
+
+# Code syntax highlighting theme
+[code_highlight]
+
+[code_highlight.keyword]
+foreground = "#d65d0e"    # Orange - keywords
+background = ""
+bold = true
+
+[code_highlight.string]
+foreground = "#98971a"    # Green - strings
+background = ""
+bold = false
+
+[code_highlight.comment]
+foreground = "#928374"    # Gray - comments
+background = ""
+bold = false
+
+[code_highlight.number]
+foreground = "#b16286"    # Purple - numbers
+background = ""
+bold = false
+
+[code_highlight.function]
+foreground = "#689d6a"    # Aqua - functions
+background = ""
+bold = false
+
+[code_highlight.type]
+foreground = "#d79921"    # Yellow - types
+background = ""
+bold = false
+
+[code_highlight.operator]
+foreground = "#d65d0e"    # Orange - operators
+background = ""
+bold = false
+
+# Chroma syntax highlighting configuration
+[chroma]
+theme = "gruvbox-light"
+
+# Scanning warning theme
+[scanning_warning.border]
+foreground = "#cc241d"    # Red - warning border
+background = ""
+bold = true
+
+[scanning_warning.title]
+foreground = "#cc241d"    # Red - warning title
+background = ""
+bold = true
+
+[scanning_warning.body]
+foreground = "#3c3836"    # Dark1 - warning body
+background = ""
+bold = false
+
+[scanning_warning.prompt]
+foreground = "#504945"    # Dark2 - prompt text
+background = ""
+bold = false
+
+# Legacy theme fields (kept for backward compatibility)
+[header]
+foreground = "#d79921"    # Yellow
+background = ""
+bold = true
+
+[status]
+foreground = "#504945"    # Dark2
+background = ""
+bold = false
+
+[search]
+foreground = "#458588"    # Blue
+background = ""
+bold = true
+
+[warning]
+foreground = "#cc241d"    # Red
+background = ""
+bold = true
+
+[selected]
+foreground = "#fbf1c7"    # Light0 - light text on dark background
+background = "#d79921"    # Yellow - warm selection
+bold = false
+
+[alternate_background]
+foreground = ""
+background = ""
+bold = false
+
+[normal_background]
+foreground = ""
+background = ""
+bold = false
+
+[frame.border]
+foreground = "#d65d0e"    # Orange
+background = ""
+bold = false
+
+[frame.background]
+foreground = ""
+background = ""
+bold = false

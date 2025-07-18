@@ -83,6 +83,11 @@ func (c *ItemCache) refreshMetadata() {
 	c.lastRefresh = time.Now()
 }
 
+// ForceRefresh forces an immediate refresh of the cache
+func (c *ItemCache) ForceRefresh() {
+	c.refreshMetadata()
+}
+
 // GetAllMeta returns all item metadata (lightweight)
 func (c *ItemCache) GetAllMeta() []ClipboardItemMeta {
 	c.mu.RLock()
